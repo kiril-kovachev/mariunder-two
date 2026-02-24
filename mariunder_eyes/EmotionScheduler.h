@@ -1,0 +1,500 @@
+#ifndef EMOTION_SCHEDULER_H
+#define EMOTION_SCHEDULER_H
+
+#include <Arduino.h>
+#include "Face.h"
+#include "AudioManager.h"
+#include "PowerManager.h"
+#include "AsyncTimer.h"
+#include "Animations.h"
+#include "FaceEmotions.hpp"
+
+// Manages emotion changes and audio synchronization
+class EmotionScheduler {
+public:
+    enum RotateMode {
+        ROTATE_MODE_NONE = 0,
+        ROTATE_MODE_1 = 1,     // Rotate changes MP3 file
+        ROTATE_MODE_2 = 2      // Rotate changes volume
+    };
+
+    EmotionScheduler() :
+        _face(nullptr),
+        _audioManager(nullptr),
+        _powerManager(nullptr),
+        _currentEmotion(NORMAL),
+        _inTapMode(false),
+        _rotateMode(ROTATE_MODE_NONE),
+        _randomChangeInterval(15000),  // 15 seconds
+        _tapModeStartTime(0),
+        _lastMotionTime(0),
+        _motionIdleThreshold(5000),  // 5 seconds of no motion
+        _readyForMotionTrigger(false),
+        _wasMoving(false),
+        _currentFolderFile(1),
+        _lastRotationCheck(0),
+        _rotateModeStartTime(0),
+        _lastRotationTime(0),
+        _rotateModeTimeout(4000),  // 45 seconds timeout
+        _enterRotateModeAnimation(200),  // 200ms animation
+        _exitRotateModeAnimation(200),
+        _pulsePhase(0.0f),
+        _canSelectNextMp3(false)
+    {}
+
+    void begin(Face* face, AudioManager* audio, PowerManager* power) {
+        _face = face;
+        _audioManager = audio;
+        _powerManager = power;
+
+        // Set singleton instance for static callbacks
+        _instance = this;
+
+        // Set up overlay callback
+        _face->OverlayCallback = nullptr;  // Will be set when entering rotate modes
+
+        // Start random emotion timer
+        _randomChangeTimer.setInterval(_randomChangeInterval);
+        _randomChangeTimer.start();
+
+        // Initialize motion tracking
+        _lastMotionTime = millis();
+        _readyForMotionTrigger = false;
+        _wasMoving = false;
+
+        Serial.println("EmotionScheduler initialized");
+    }
+
+    void update() {
+        if (_face == nullptr || _powerManager == nullptr) return;
+
+        // Check rotate mode timeout (45 seconds of no rotation)
+        if (_rotateMode != ROTATE_MODE_NONE) {
+            uint32_t now = millis();
+            if ((now - _lastRotationTime) >= _rotateModeTimeout) {
+                Serial.println("Rotate mode timeout (45s no rotation) - exiting");
+                exitRotateMode();
+            }
+            return;  // Don't do other updates in rotate mode
+        }
+
+        // Check power state - force SLEEPY emotion if in sleepy mode OR deep sleep mode
+        // BUT only if audio playback has completed
+        if (_powerManager->getState() == POWER_SLEEPY || _powerManager->getState() == POWER_DEEP_SLEEP) {
+            if (_currentEmotion != SLEEPY) {
+                // Check if audio is still playing
+                if (_audioManager != nullptr && _audioManager->isPlaying()) {
+                    Serial.println("PowerManager wants sleepy mode, but audio is still playing - waiting...");
+                    // Don't enter sleepy mode yet, but don't do random changes either
+                    return;
+                }
+
+                Serial.println("PowerManager in POWER_SLEEPY/POWER_DEEP_SLEEP state - forcing sleepy emotion");
+                changeEmotionTo(SLEEPY);
+                _audioManager->playSleepSound();
+            }
+            return;  // Don't do random changes in sleepy mode
+        }
+
+        // Don't do random changes in tap mode or rotate modes
+        if (_inTapMode || _rotateMode != ROTATE_MODE_NONE) {
+            return;
+        }
+
+        // Check for random emotion change
+        if (_randomChangeTimer.isExpired()) {
+            changeEmotionRandom();
+            _randomChangeTimer.restart();
+        }
+    }
+
+    void handleMotion(MotionManager* motionManager) {
+        if (motionManager == nullptr) return;
+
+        uint32_t now = millis();
+        bool isCurrentlyMoving = motionManager->isMoving();
+
+        if (isCurrentlyMoving) {
+            // Motion detected - check if we're ready to trigger emotion change
+            if (_readyForMotionTrigger && !_wasMoving) {
+                // Motion just started after idle period - trigger emotion change
+                Serial.println("Motion detected after 5s idle - changing face emotion");
+                changeEmotionRandom();
+                _readyForMotionTrigger = false;  // Reset - wait for next 5s idle period
+            }
+            // Update last motion time when motion is detected
+            _lastMotionTime = now;
+            _wasMoving = true;
+        } else {
+            // No motion - check if we've been idle for 5 seconds
+            if (_wasMoving) {
+                // Motion just stopped - reset idle timer
+                _lastMotionTime = now;
+            }
+            
+            uint32_t idleTime = now - _lastMotionTime;
+            if (idleTime >= _motionIdleThreshold && !_readyForMotionTrigger) {
+                Serial.println("5 seconds of no motion - ready to trigger emotion on next motion");
+                _readyForMotionTrigger = true;
+            }
+            _wasMoving = false;
+        }
+    }
+
+    void handleShake() {
+        Serial.println("Shake detected! Getting angry!");
+
+        // Pick random angry emotion
+        FaceEmotions shakeEmotions[] = {ANGRY, FURIOUS};
+        FaceEmotions emotion = shakeEmotions[random(0, 2)];
+
+        changeEmotionTo(emotion);
+        _audioManager->playEmotion(emotion);
+
+        // Reset random timer to prevent immediate change
+        _randomChangeTimer.restart();
+    }
+
+    void handleTap(int tap) {
+        // Accept tap as int for compatibility with both TouchSensorManager and MotionManager
+        // 0 = NONE, 1 = SINGLE_TAP, 2 = DOUBLE_TAP
+        if (tap == 0) return;  // NONE
+
+        // Trigger hit-on-head visual effect for any tap
+        _face->HitOnHead();
+
+        if (tap == 2) {  // DOUBLE_TAP
+            // Double tap: enter rotate mode 2 (volume control) OR stop playback if not in rotate mode
+            if (_rotateMode == ROTATE_MODE_NONE) {
+                // Not in rotate mode - stop any playing audio first, then enter rotate mode 2
+                if (_audioManager->isPlaying()) {
+                    Serial.println("Double tap - stopping playback");
+                    _audioManager->stopPlayback();
+                }
+                Serial.println("Double tap - entering rotate mode 2 (volume control)");
+                enterRotateMode2();
+            } else {
+                // Already in a rotate mode - ignore double tap
+                Serial.println("Double tap ignored - already in rotate mode");
+            }
+            return;
+        }
+
+        // Single tap behavior depends on current state
+        if (_rotateMode == ROTATE_MODE_NONE) {
+            // Not in rotate mode - stop any playing audio first, then enter rotate mode 1
+            if (_audioManager->isPlaying()) {
+                Serial.println("Single tap - stopping playback");
+                _audioManager->stopPlayback();
+            }
+            Serial.println("Single tap - entering rotate mode 1 (MP3 file change)");
+            enterRotateMode1();
+        } else {
+            // In rotate mode - exit it
+            Serial.println("Single tap - exiting rotate mode");
+            exitRotateMode();
+        }
+
+        _randomChangeTimer.restart();
+    }
+
+    void setTapMode(bool enabled) {
+        _inTapMode = enabled;
+        if (!enabled) {
+            Serial.println("Exiting tap mode");
+            _randomChangeTimer.restart();
+        }
+    }
+
+    bool inTapMode() const {
+        return _inTapMode;
+    }
+
+    RotateMode getRotateMode() const {
+        return _rotateMode;
+    }
+
+    // Handle rotation in rotate modes
+    void handleRotation(MotionManager* motionManager) {
+        if (_rotateMode == ROTATE_MODE_NONE || motionManager == nullptr) {
+            return;
+        }
+
+        // Update rotation tracking
+        motionManager->updateRotation();
+
+        // Check rotation threshold (15 degrees)
+        float accumulatedRotation = motionManager->getAccumulatedRotation();
+        float degrees = accumulatedRotation * 180.0f / PI;
+
+        const float ROTATION_THRESHOLD = 15.0f;
+
+        if (_rotateMode == ROTATE_MODE_1) {
+            // Update visual feedback - can select next MP3 when rotation is close to threshold
+            _canSelectNextMp3 = abs(degrees) >= (ROTATION_THRESHOLD * 0.7f);  // Visual feedback at 70% threshold
+
+            // Rotate mode 1: Change MP3 file on 15-degree rotation
+            if (abs(degrees) >= ROTATION_THRESHOLD) {
+                // Update last rotation time (for timeout tracking)
+                _lastRotationTime = millis();
+
+                if (degrees > 0) {
+                    // Rotate right - next file
+                    Serial.println("Rotate right - next MP3 file");
+                    _currentFolderFile++;
+                    if (_currentFolderFile > 10) _currentFolderFile = 1;  // Assuming 10 files in folder 02
+                } else {
+                    // Rotate left - previous file
+                    Serial.println("Rotate left - previous MP3 file");
+                    _currentFolderFile--;
+                    if (_currentFolderFile < 1) _currentFolderFile = 10;
+                }
+
+                // Play the file from folder 02
+                Serial.print("Playing folder 02, file ");
+                Serial.println(_currentFolderFile);
+                _audioManager->stopPlayback();  // Stop current playback
+                delay(50);
+                _audioManager->playFolderFile(2, _currentFolderFile);
+
+                // Reset rotation accumulator and visual feedback
+                motionManager->resetAccumulatedRotation();
+                _canSelectNextMp3 = true;  // Reset to normal size after selection
+            }
+        } else if (_rotateMode == ROTATE_MODE_2) {
+            // Rotate mode 2: Change volume on 15-degree rotation
+            if (abs(degrees) >= ROTATION_THRESHOLD) {
+                // Update last rotation time (for timeout tracking)
+                _lastRotationTime = millis();
+
+                if (degrees > 0) {
+                    // Rotate right - volume up
+                    Serial.println("Rotate right - volume up");
+                    _audioManager->increaseVolume();
+                } else {
+                    // Rotate left - volume down
+                    Serial.println("Rotate left - volume down");
+                    _audioManager->decreaseVolume();
+                }
+
+                // Reset rotation accumulator
+                motionManager->resetAccumulatedRotation();
+            }
+        }
+    }
+
+private:
+    void enterRotateMode1() {
+        _rotateMode = ROTATE_MODE_1;
+        _currentFolderFile = 1;
+        _rotateModeStartTime = millis();
+        _lastRotationTime = millis();  // Initialize rotation timer
+        _pulsePhase = 0.0f;            // Reset pulse animation
+        _canSelectNextMp3 = true;      // Ready to select first MP3
+
+        // Set overlay callback
+        _face->OverlayCallback = staticDrawRotateMode1Overlay;
+
+        // Play animation: eyes look slightly left and right quickly
+        _enterRotateModeAnimation.Restart();
+        _face->LookLeft();
+        delay(100);
+        _face->LookRight();
+        delay(100);
+        _face->LookFront();
+
+        // Don't start playing MP3 yet - wait for rotation
+        Serial.println("Entering rotate mode 1 - rotate 15 degrees to play MP3 from folder 02");
+        Serial.println("Rotate mode 1 active - will timeout after 45s of no rotation");
+    }
+
+    void enterRotateMode2() {
+        _rotateMode = ROTATE_MODE_2;
+        _rotateModeStartTime = millis();
+        _lastRotationTime = millis();  // Initialize rotation timer
+
+        // Set overlay callback
+        _face->OverlayCallback = staticDrawRotateMode2Overlay;
+
+        // Play different animation: eyes look up and down
+        _enterRotateModeAnimation.Restart();
+        _face->LookTop();
+        delay(100);
+        _face->LookBottom();
+        delay(100);
+        _face->LookFront();
+
+        Serial.print("Rotate mode 2 active - rotate 15 degrees to change volume (current: ");
+        Serial.print(_audioManager->getCurrentVolume());
+        Serial.println(")");
+        Serial.println("Will timeout after 45s of no rotation");
+    }
+
+    void exitRotateMode() {
+        RotateMode previousMode = _rotateMode;
+        _rotateMode = ROTATE_MODE_NONE;
+
+        // Clear overlay callback
+        _face->OverlayCallback = nullptr;
+
+        // Play exit animation based on which mode we're exiting
+        _exitRotateModeAnimation.Restart();
+
+        if (previousMode == ROTATE_MODE_1) {
+            // Rotate mode 1 exit: blink quickly
+            _face->DoBlink();
+            delay(150);
+            _face->DoBlink();
+
+            // Don't stop playback - let it continue playing
+            Serial.println("Exiting rotate mode 1 - playback continues");
+        } else if (previousMode == ROTATE_MODE_2) {
+            // Rotate mode 2 exit: eyes do a circle motion
+            _face->LookLeft();
+            delay(80);
+            _face->LookTop();
+            delay(80);
+            _face->LookRight();
+            delay(80);
+            _face->LookBottom();
+            delay(80);
+            _face->LookFront();
+
+            Serial.println("Exiting rotate mode 2");
+        }
+
+        Serial.println("Rotate mode exited - normal behavior resumed");
+    }
+    void changeEmotionRandom() {
+        // Exclude SLEEPY from random emotions
+        FaceEmotions exclude[] = {SLEEPY};
+        FaceEmotions newEmotion = _face->Behavior.GetRandomEmotionExcluding(exclude, 1);
+
+        // Don't repeat the same emotion
+        if (newEmotion == _currentEmotion) {
+            // Try one more time
+            newEmotion = _face->Behavior.GetRandomEmotionExcluding(exclude, 1);
+        }
+
+        changeEmotionTo(newEmotion);
+        _audioManager->playEmotion(newEmotion);
+    }
+
+    void changeEmotionTo(FaceEmotions emotion) {
+        Serial.print("Changing emotion to: ");
+        Serial.println(getEmotionName(emotion));
+
+        _currentEmotion = emotion;
+        
+        // Use GoTo_* methods based on emotion
+        switch(emotion) {
+            case NORMAL: _face->Expression.GoTo_Normal(); break;
+            case HAPPY: _face->Expression.GoTo_Happy(); break;
+            case ANGRY: _face->Expression.GoTo_Angry(); break;
+            case SAD: _face->Expression.GoTo_Sad(); break;
+            case SURPRISED: _face->Expression.GoTo_Surprised(); break;
+            case SLEEPY: _face->Expression.GoTo_Sleepy(); break;
+            case SCARED: _face->Expression.GoTo_Scared(); break;
+            case FURIOUS: _face->Expression.GoTo_Furious(); break;
+            case EXCITED: _face->Expression.GoTo_Excited(); break;
+            case DISAPPOINTED: _face->Expression.GoTo_Disappointed(); break;
+            case CONFUSED: _face->Expression.GoTo_Confused(); break;
+            case CURIOUS: _face->Expression.GoTo_Curious(); break;
+            case BORED: _face->Expression.GoTo_Bored(); break;
+            case WORRIED: _face->Expression.GoTo_Worried(); break;
+            case ANNOYED: _face->Expression.GoTo_Annoyed(); break;
+            case SUSPICIOUS: _face->Expression.GoTo_Suspicious(); break;
+            case SKEPTICAL: _face->Expression.GoTo_Skeptical(); break;
+            case FRUSTRATED: _face->Expression.GoTo_Frustrated(); break;
+        }
+    }
+
+    Face* _face;
+    AudioManager* _audioManager;
+    PowerManager* _powerManager;
+
+    FaceEmotions _currentEmotion;
+    bool _inTapMode;
+    RotateMode _rotateMode;
+    AsyncTimer _randomChangeTimer;
+    uint32_t _randomChangeInterval;
+    uint32_t _tapModeStartTime;
+    uint32_t _lastMotionTime;
+    uint32_t _motionIdleThreshold;
+    bool _readyForMotionTrigger;
+    bool _wasMoving;
+
+    // Rotate mode state
+    int _currentFolderFile;
+    uint32_t _lastRotationCheck;
+    uint32_t _rotateModeStartTime;      // When rotate mode was entered
+    uint32_t _lastRotationTime;         // Last time rotation was detected
+    uint32_t _rotateModeTimeout;        // Timeout for rotate mode (45s)
+    RampAnimation _enterRotateModeAnimation;
+    RampAnimation _exitRotateModeAnimation;
+
+    // Overlay state for rotate modes
+    float _pulsePhase;                  // Phase for pulsating circle animation (0-TWO_PI)
+    bool _canSelectNextMp3;             // True when ready to select next MP3
+
+    // Static overlay rendering methods (to be used as callbacks)
+    static EmotionScheduler* _instance;  // Singleton instance for static callbacks
+
+    void drawRotateMode1Overlay() {
+        // Draw pulsating circle for rotate mode 1
+        extern U8G2* u8g2;
+
+        // Update pulse animation
+        _pulsePhase += 0.15f;  // Speed of pulsation
+        if (_pulsePhase > TWO_PI) _pulsePhase -= TWO_PI;
+
+        // Calculate radius based on whether we can select next MP3
+        float baseRadius = _canSelectNextMp3 ? 15.0f : 10.0f;  // Bigger when ready
+        float pulse = sin(_pulsePhase) * 0.5f + 0.5f;  // 0.0 to 1.0
+        int radius = (int)(baseRadius + pulse * 5.0f);  // Pulsate ±5 pixels
+
+        // Draw circle in bottom right corner
+        int centerX = 128 - 20;  // 20 pixels from right edge
+        int centerY = 64 - 15;   // 15 pixels from bottom
+
+        u8g2->drawCircle(centerX, centerY, radius);
+    }
+
+    void drawRotateMode2Overlay() {
+        // Draw volume indicator for rotate mode 2
+        extern U8G2* u8g2;
+
+        // Get current volume (0-30) and convert to 1-10 scale
+        uint8_t volume30 = _audioManager->getCurrentVolume();
+        int volumeDisplay = (volume30 * 10) / 30 + 1;  // Convert 0-30 to 1-10
+        if (volumeDisplay > 10) volumeDisplay = 10;
+        if (volumeDisplay < 1) volumeDisplay = 1;
+
+        // Draw volume number in center of screen
+        char volumeStr[4];
+        sprintf(volumeStr, "%d", volumeDisplay);
+
+        u8g2->setFont(u8g2_font_inb30_mn);  // Large font for numbers
+
+        // Calculate text width for centering
+        int textWidth = u8g2->getStrWidth(volumeStr);
+        int x = (128 - textWidth) / 2;
+        int y = 48;  // Centered vertically (baseline)
+
+        u8g2->drawStr(x, y, volumeStr);
+
+        // Restore default font
+        u8g2->setFont(u8g2_font_ncenB08_tr);
+    }
+
+    // Static wrappers for callbacks
+    static void staticDrawRotateMode1Overlay() {
+        if (_instance) _instance->drawRotateMode1Overlay();
+    }
+
+    static void staticDrawRotateMode2Overlay() {
+        if (_instance) _instance->drawRotateMode2Overlay();
+    }
+};
+
+#endif // EMOTION_SCHEDULER_H
