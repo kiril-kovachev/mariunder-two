@@ -4,8 +4,6 @@
 
 #include "InertiaAssistant.h"
 #include "Face.h"
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
 
 InertiaAssistant::InertiaAssistant(Face& face)
     : _face(face),
@@ -44,17 +42,19 @@ void InertiaAssistant::Update() {
     // Clamp delta time to prevent large jumps
     if (deltaTime > 0.1f) deltaTime = 0.1f;
 
-    // Get gyroscope data
-    sensors_event_t accel, gyro, temp;
-    _motionManager->_mpu.getEvent(&accel, &gyro, &temp);
+    // Get gyroscope data from MPU6050 directly (raw readings)
+    // This is more efficient than processing FIFO for inertia
+    int16_t gx, gy, gz;
+    _motionManager->_mpu.getRotation(&gx, &gy, &gz);
+
+    // Convert raw gyro readings to rad/s (gyro sensitivity at 500 deg/s is 65.5 LSB/(deg/s))
+    // At 500 deg/s range: 1 deg/s = 65.5 LSB
+    float gyroX = (gx / 65.5f) * (PI / 180.0f);  // Convert to rad/s
+    float gyroY = (gy / 65.5f) * (PI / 180.0f);
 
     // Apply rotation data to create inertia effect
     // Gyro gives rotation rate in rad/s
     // We'll use X and Y rotation to move the eyes
-    float gyroX = gyro.gyro.x;  // Pitch (rotation around X-axis)
-    float gyroY = gyro.gyro.y;  // Roll (rotation around Y-axis)
-
-    // Convert rotation to acceleration on eye position
     // When device rotates right, eyes should lag left (inertia)
     float accelX = -gyroY * Sensitivity * 10.0f;  // Negate for natural feel
     float accelY = gyroX * Sensitivity * 10.0f;

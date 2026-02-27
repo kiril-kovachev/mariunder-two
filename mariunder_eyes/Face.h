@@ -44,6 +44,9 @@ public:
     // Overlay callback - set this to draw custom overlays on top of eyes
     void (*OverlayCallback)() = nullptr;
 
+    // Flag to hide eyes (useful for rotate modes)
+    bool HideEyes = false;
+
     void Update();
     void DoBlink();
 

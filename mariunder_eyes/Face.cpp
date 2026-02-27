@@ -94,15 +94,18 @@ void Face::Draw() {
     // Clear the display
     u8g2->clearBuffer();
 
-    // Draw left eye
-    LeftEye.CenterX = CenterX - EyeSize / 2 - EyeInterDistance;
-    LeftEye.CenterY = CenterY;
-    LeftEye.Draw();
+    // Draw eyes only if not hidden
+    if (!HideEyes) {
+        // Draw left eye
+        LeftEye.CenterX = CenterX - EyeSize / 2 - EyeInterDistance;
+        LeftEye.CenterY = CenterY;
+        LeftEye.Draw();
 
-    // Draw right eye
-    RightEye.CenterX = CenterX + EyeSize / 2 + EyeInterDistance;
-    RightEye.CenterY = CenterY;
-    RightEye.Draw();
+        // Draw right eye
+        RightEye.CenterX = CenterX + EyeSize / 2 + EyeInterDistance;
+        RightEye.CenterY = CenterY;
+        RightEye.Draw();
+    }
 
     // Draw overlay if callback is set
     if (OverlayCallback != nullptr) {

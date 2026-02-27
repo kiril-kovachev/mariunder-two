@@ -259,7 +259,7 @@ public:
 
                 // Reset rotation accumulator and visual feedback
                 motionManager->resetAccumulatedRotation();
-                _canSelectNextMp3 = true;  // Reset to normal size after selection
+                _canSelectNextMp3 = false;  // Reset to normal size after selection
             }
         } else if (_rotateMode == ROTATE_MODE_2) {
             // Rotate mode 2: Change volume on 15-degree rotation
@@ -290,12 +290,14 @@ private:
         _rotateModeStartTime = millis();
         _lastRotationTime = millis();  // Initialize rotation timer
         _pulsePhase = 0.0f;            // Reset pulse animation
-        _canSelectNextMp3 = true;      // Ready to select first MP3
+        _canSelectNextMp3 = false;     // Not ready yet (changed from true)
 
-        // Set overlay callback
+        // Hide eyes and set overlay callback
+        _face->HideEyes = true;
         _face->OverlayCallback = staticDrawRotateMode1Overlay;
 
         // Play animation: eyes look slightly left and right quickly
+        // (Eyes won't be visible, but the Look position will be set)
         _enterRotateModeAnimation.Restart();
         _face->LookLeft();
         delay(100);
@@ -313,10 +315,12 @@ private:
         _rotateModeStartTime = millis();
         _lastRotationTime = millis();  // Initialize rotation timer
 
-        // Set overlay callback
+        // Hide eyes and set overlay callback
+        _face->HideEyes = true;
         _face->OverlayCallback = staticDrawRotateMode2Overlay;
 
         // Play different animation: eyes look up and down
+        // (Eyes won't be visible, but the Look position will be set)
         _enterRotateModeAnimation.Restart();
         _face->LookTop();
         delay(100);
@@ -334,7 +338,8 @@ private:
         RotateMode previousMode = _rotateMode;
         _rotateMode = ROTATE_MODE_NONE;
 
-        // Clear overlay callback
+        // Restore eyes and clear overlay callback
+        _face->HideEyes = false;
         _face->OverlayCallback = nullptr;
 
         // Play exit animation based on which mode we're exiting
@@ -441,7 +446,7 @@ private:
     static EmotionScheduler* _instance;  // Singleton instance for static callbacks
 
     void drawRotateMode1Overlay() {
-        // Draw pulsating circle for rotate mode 1
+        // Draw pulsating filled circle for rotate mode 1 (centered)
         extern U8G2* u8g2;
 
         // Update pulse animation
@@ -449,15 +454,15 @@ private:
         if (_pulsePhase > TWO_PI) _pulsePhase -= TWO_PI;
 
         // Calculate radius based on whether we can select next MP3
-        float baseRadius = _canSelectNextMp3 ? 15.0f : 10.0f;  // Bigger when ready
+        float baseRadius = _canSelectNextMp3 ? 20.0f : 12.0f;  // Bigger when at threshold
         float pulse = sin(_pulsePhase) * 0.5f + 0.5f;  // 0.0 to 1.0
-        int radius = (int)(baseRadius + pulse * 5.0f);  // Pulsate ±5 pixels
+        int radius = (int)(baseRadius + pulse * 6.0f);  // Pulsate ±6 pixels
 
-        // Draw circle in bottom right corner
-        int centerX = 128 - 20;  // 20 pixels from right edge
-        int centerY = 64 - 15;   // 15 pixels from bottom
+        // Draw filled circle in center of screen
+        int centerX = 64;  // Center X (128 / 2)
+        int centerY = 32;  // Center Y (64 / 2)
 
-        u8g2->drawCircle(centerX, centerY, radius);
+        u8g2->drawDisc(centerX, centerY, radius);
     }
 
     void drawRotateMode2Overlay() {
