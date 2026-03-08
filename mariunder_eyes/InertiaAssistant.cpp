@@ -42,44 +42,64 @@ void InertiaAssistant::Update() {
     // Clamp delta time to prevent large jumps
     if (deltaTime > 0.1f) deltaTime = 0.1f;
 
-    // Get gyroscope data from MPU6050 directly (raw readings)
-    // This is more efficient than processing FIFO for inertia
-    int16_t gx, gy, gz;
-    _motionManager->_mpu.getRotation(&gx, &gy, &gz);
+    // Get latest gyroscope data from MotionManager (degrees/second)
+    float gyroDegX = _motionManager->getGyroX();
+    float gyroDegY = _motionManager->getGyroY();
 
-    // Convert raw gyro readings to rad/s (gyro sensitivity at 500 deg/s is 65.5 LSB/(deg/s))
-    // At 500 deg/s range: 1 deg/s = 65.5 LSB
-    float gyroX = (gx / 65.5f) * (PI / 180.0f);  // Convert to rad/s
-    float gyroY = (gy / 65.5f) * (PI / 180.0f);
+    // If there is essentially no rotation, slowly return to center and skip
+    float gyroMag = sqrt(gyroDegX * gyroDegX + gyroDegY * gyroDegY);
+    if (gyroMag < 5.0f) { // deadband ~5 deg/s
+        // Apply only return-to-center when no significant rotation
+        _velocityX -= _positionX * ReturnSpeed;
+        _velocityY -= _positionY * ReturnSpeed;
 
-    // Apply rotation data to create inertia effect
-    // Gyro gives rotation rate in rad/s
-    // We'll use X and Y rotation to move the eyes
-    // When device rotates right, eyes should lag left (inertia)
-    float accelX = -gyroY * Sensitivity * 10.0f;  // Negate for natural feel
-    float accelY = gyroX * Sensitivity * 10.0f;
+        _velocityX *= Damping;
+        _velocityY *= Damping;
 
-    // Update velocity with acceleration and damping
-    _velocityX += accelX * deltaTime;
-    _velocityY += accelY * deltaTime;
+        _positionX += _velocityX * deltaTime;
+        _positionY += _velocityY * deltaTime;
 
-    // Apply damping to velocity
-    _velocityX *= Damping;
-    _velocityY *= Damping;
+        // Clamp position
+        if (_positionX > MaxDisplacement) _positionX = MaxDisplacement;
+        if (_positionX < -MaxDisplacement) _positionX = -MaxDisplacement;
+        if (_positionY > MaxDisplacement) _positionY = MaxDisplacement;
+        if (_positionY < -MaxDisplacement) _positionY = -MaxDisplacement;
 
-    // Add return force towards center (spring-like behavior)
-    _velocityX -= _positionX * ReturnSpeed;
-    _velocityY -= _positionY * ReturnSpeed;
+        // Continue to apply transformation with updated position
+    } else {
+        // Convert to rad/s
+        float gyroX = gyroDegX * (PI / 180.0f);
+        float gyroY = gyroDegY * (PI / 180.0f);
 
-    // Update position
-    _positionX += _velocityX * deltaTime;
-    _positionY += _velocityY * deltaTime;
+        // Apply rotation data to create inertia effect
+        // Gyro gives rotation rate in rad/s
+        // We'll use X and Y rotation to move the eyes
+        // When device rotates right, eyes should lag left (inertia)
+        float accelX = -gyroY * Sensitivity * 10.0f;  // Negate for natural feel
+        float accelY = gyroX * Sensitivity * 10.0f;
 
-    // Clamp position to max displacement
-    if (_positionX > MaxDisplacement) _positionX = MaxDisplacement;
-    if (_positionX < -MaxDisplacement) _positionX = -MaxDisplacement;
-    if (_positionY > MaxDisplacement) _positionY = MaxDisplacement;
-    if (_positionY < -MaxDisplacement) _positionY = -MaxDisplacement;
+        // Update velocity with acceleration and damping
+        _velocityX += accelX * deltaTime;
+        _velocityY += accelY * deltaTime;
+
+        // Apply damping to velocity
+        _velocityX *= Damping;
+        _velocityY *= Damping;
+
+        // Add return force towards center (spring-like behavior)
+        _velocityX -= _positionX * ReturnSpeed;
+        _velocityY -= _positionY * ReturnSpeed;
+
+        // Update position
+        _positionX += _velocityX * deltaTime;
+        _positionY += _velocityY * deltaTime;
+
+        // Clamp position to max displacement
+        if (_positionX > MaxDisplacement) _positionX = MaxDisplacement;
+        if (_positionX < -MaxDisplacement) _positionX = -MaxDisplacement;
+        if (_positionY > MaxDisplacement) _positionY = MaxDisplacement;
+        if (_positionY < -MaxDisplacement) _positionY = -MaxDisplacement;
+    }
 
     // Calculate movement magnitude to determine if inertia effect is significant
     float positionMagnitude = sqrt(_positionX * _positionX + _positionY * _positionY);
@@ -105,10 +125,10 @@ void InertiaAssistant::Update() {
         Serial.print(_velocityX);
         Serial.print(", ");
         Serial.print(_velocityY);
-        Serial.print(") Gyro: (");
-        Serial.print(gyroX);
+        Serial.print(") GyroDeg: (");
+        Serial.print(gyroDegX);
         Serial.print(", ");
-        Serial.print(gyroY);
+        Serial.print(gyroDegY);
         Serial.println(")");
         _lastLoggedPositionMag = positionMagnitude;
     }

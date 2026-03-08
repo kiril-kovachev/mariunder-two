@@ -35,11 +35,13 @@ public:
         _lastRotationCheck(0),
         _rotateModeStartTime(0),
         _lastRotationTime(0),
-        _rotateModeTimeout(4000),  // 45 seconds timeout
+        _rotateModeTimeout(45000),   // 45 seconds timeout
         _enterRotateModeAnimation(200),  // 200ms animation
         _exitRotateModeAnimation(200),
         _pulsePhase(0.0f),
-        _canSelectNextMp3(false)
+        _canSelectNextMp3(false),
+        _lastShakeTime(0),
+        _shakeCooldown(10000)        // 10s cooldown between shake reactions
     {}
 
     void begin(Face* face, AudioManager* audio, PowerManager* power) {
@@ -142,6 +144,13 @@ public:
     }
 
     void handleShake() {
+        uint32_t now = millis();
+        if (now - _lastShakeTime < _shakeCooldown) {
+            Serial.println("Shake detected but ignored (cooldown)");
+            return;
+        }
+        _lastShakeTime = now;
+
         Serial.println("Shake detected! Getting angry!");
 
         // Pick random angry emotion
@@ -371,14 +380,14 @@ private:
         Serial.println("Rotate mode exited - normal behavior resumed");
     }
     void changeEmotionRandom() {
-        // Exclude SLEEPY from random emotions
-        FaceEmotions exclude[] = {SLEEPY};
-        FaceEmotions newEmotion = _face->Behavior.GetRandomEmotionExcluding(exclude, 1);
+        // Exclude SLEEPY and strong negative emotions from random changes
+        FaceEmotions exclude[] = {SLEEPY, ANGRY, FURIOUS};
+        FaceEmotions newEmotion = _face->Behavior.GetRandomEmotionExcluding(exclude, 3);
 
         // Don't repeat the same emotion
         if (newEmotion == _currentEmotion) {
             // Try one more time
-            newEmotion = _face->Behavior.GetRandomEmotionExcluding(exclude, 1);
+            newEmotion = _face->Behavior.GetRandomEmotionExcluding(exclude, 3);
         }
 
         changeEmotionTo(newEmotion);
@@ -441,6 +450,10 @@ private:
     // Overlay state for rotate modes
     float _pulsePhase;                  // Phase for pulsating circle animation (0-TWO_PI)
     bool _canSelectNextMp3;             // True when ready to select next MP3
+
+    // Shake handling
+    uint32_t _lastShakeTime;            // Last time a shake was handled
+    uint32_t _shakeCooldown;            // Minimum ms between shake reactions
 
     // Static overlay rendering methods (to be used as callbacks)
     static EmotionScheduler* _instance;  // Singleton instance for static callbacks

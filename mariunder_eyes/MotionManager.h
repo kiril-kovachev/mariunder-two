@@ -24,14 +24,21 @@ public:
         _lastMotionTime(0),
         _isInitialized(false),
         _dmpReady(false),
-        _shakeThreshold(1.5f),  // 1.5g
+        _shakeThreshold(0.8f),  // Threshold on acceleration spike above baseline (g)
         _motionThreshold(0.3f), // 0.3g for general motion
         _accumulatedRotation(0.0f),
         _lastRotationUpdateTime(0),
         _lastLoggedRotation(0.0f),
+        _lastGyroX(0.0f),
+        _lastGyroY(0.0f),
+        _lastGyroZ(0.0f),
         _lastTap(NONE),
         _packetSize(0),
-        _fifoCount(0)
+        _fifoCount(0),
+        _lastAccelMagnitude(0.0f),
+        _smoothedAccel(0.0f),
+        _lastYaw(0.0f),
+        _lastRotationYaw(0.0f)
     {}
 
     bool begin() {
@@ -71,10 +78,6 @@ public:
             Serial.println(F("Enabling DMP..."));
             _mpu.setDMPEnabled(true);
 
-            // Enable tap detection
-            _mpu.setTapDetectionOnXYZ(true, true, true);
-            _mpu.setTapThreshold(3, 250);  // X/Y/Z axes, threshold
-
             Serial.println(F("DMP ready! Waiting for first data..."));
             _dmpReady = true;
 
@@ -113,12 +116,12 @@ public:
         // Wait for correct available data length
         if (_fifoCount < _packetSize) return;
 
-        // Read a packet from FIFO
+        // Drain FIFO, keeping only the most recent packet for processing
         uint8_t fifoBuffer[64];
-        _mpu.getFIFOBytes(fifoBuffer, _packetSize);
-
-        // Track FIFO count in case there is > 1 packet available
-        _fifoCount -= _packetSize;
+        while (_fifoCount >= _packetSize) {
+            _mpu.getFIFOBytes(fifoBuffer, _packetSize);
+            _fifoCount -= _packetSize;
+        }
 
         // Get quaternion for orientation
         Quaternion q;
@@ -135,6 +138,11 @@ public:
         _mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
         _mpu.dmpGetLinearAccelInWorld(&aaWorld, &aaReal, &q);
 
+        // Get yaw from DMP (radians)
+        float ypr[3];
+        _mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+        _lastYaw = ypr[0];
+
         // Calculate motion magnitude (in raw units, ~8192 per g)
         float accelMagnitude = sqrt(
             aaWorld.x * aaWorld.x +
@@ -142,66 +150,34 @@ public:
             aaWorld.z * aaWorld.z
         ) / 8192.0f; // Convert to g
 
+        // Store for shake detection (with smoothing for baseline)
+        _lastAccelMagnitude = accelMagnitude;
+        _smoothedAccel = 0.9f * _smoothedAccel + 0.1f * accelMagnitude;
+
         // Check for motion
         if (accelMagnitude > _motionThreshold) {
             _lastMotionTime = millis();
         }
 
-        // Check for tap detection
-        uint8_t tapStatus = _mpu.getTapDetectStatus();
-        if (tapStatus & 0x01) { // X-axis tap
-            _lastTap = SINGLE_TAP;
-            Serial.println(F("Tap detected on X-axis"));
-        }
-        if (tapStatus & 0x02) { // Y-axis tap
-            _lastTap = SINGLE_TAP;
-            Serial.println(F("Tap detected on Y-axis"));
-        }
-        if (tapStatus & 0x04) { // Z-axis tap
-            _lastTap = SINGLE_TAP;
-            Serial.println(F("Tap detected on Z-axis"));
-        }
-
-        // Get gyro for rotation tracking
+        // Get gyro for rotation and inertia tracking
         VectorInt16 gyro;
         _mpu.dmpGetGyro(&gyro, fifoBuffer);
         
-        // Store for rotation tracking
-        _lastGyroZ = gyro.z / 131.0f; // Convert to degrees/second
+        // Store for rotation tracking (degrees/second)
+        _lastGyroX = gyro.x / 131.0f;
+        _lastGyroY = gyro.y / 131.0f;
+        _lastGyroZ = gyro.z / 131.0f;
     }
 
     bool isShaking() {
         if (!_isInitialized || !_dmpReady) return false;
 
-        // Check if FIFO has data
-        uint16_t fifoCount = _mpu.getFIFOCount();
-        if (fifoCount < _packetSize) return false;
-
-        // Read a packet from FIFO
-        uint8_t fifoBuffer[64];
-        _mpu.getFIFOBytes(fifoBuffer, _packetSize);
-
-        // Get acceleration (gravity-compensated)
-        Quaternion q;
-        VectorInt16 aa;
-        VectorFloat gravity;
-        VectorInt16 aaReal;
-        VectorInt16 aaWorld;
-        
-        _mpu.dmpGetQuaternion(&q, fifoBuffer);
-        _mpu.dmpGetAccel(&aa, fifoBuffer);
-        _mpu.dmpGetGravity(&gravity, &q);
-        _mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
-        _mpu.dmpGetLinearAccelInWorld(&aaWorld, &aaReal, &q);
-
-        // Calculate acceleration magnitude (in g)
-        float accelMagnitude = sqrt(
-            aaWorld.x * aaWorld.x +
-            aaWorld.y * aaWorld.y +
-            aaWorld.z * aaWorld.z
-        ) / 8192.0f; // Convert to g
-
-        return accelMagnitude > _shakeThreshold;
+        // Use a high-pass style check: spike above smoothed baseline
+        float delta = _lastAccelMagnitude - _smoothedAccel;
+        if (_lastAccelMagnitude < 0.4f) {
+            return false; // Ignore very small motions entirely
+        }
+        return delta > _shakeThreshold;
     }
 
     bool isMoving() {
@@ -222,6 +198,11 @@ public:
         return _lastGyroZ;
     }
 
+    // Latest gyro readings (degrees/second) for inertia
+    float getGyroX() const { return _lastGyroX; }
+    float getGyroY() const { return _lastGyroY; }
+    float getGyroZ() const { return _lastGyroZ; }
+
     // Get accumulated rotation angle (integrated over time)
     float getAccumulatedRotation() {
         return _accumulatedRotation;
@@ -231,6 +212,7 @@ public:
         _accumulatedRotation = 0.0f;
         _lastRotationUpdateTime = millis();
         _lastLoggedRotation = 0.0f;
+        _lastRotationYaw = _lastYaw;
     }
 
     void updateRotation() {
@@ -239,24 +221,31 @@ public:
         uint32_t now = millis();
         if (_lastRotationUpdateTime == 0) {
             _lastRotationUpdateTime = now;
+            _lastRotationYaw = _lastYaw;
             return;
         }
 
         float deltaTime = (now - _lastRotationUpdateTime) / 1000.0f;
         _lastRotationUpdateTime = now;
 
-        if (deltaTime > 0.1f) return; // Skip large time jumps
+        if (deltaTime > 0.2f) return; // Skip large time jumps
 
-        // Integrate Z-axis rotation over time to get angle
-        // _lastGyroZ is in degrees/s, multiply by deltaTime to get degrees
-        float rotationRate = _lastGyroZ * DEG_TO_RAD; // Convert to radians/s
-        _accumulatedRotation += rotationRate * deltaTime;
+        // Use change in yaw from DMP to accumulate rotation (radians)
+        float deltaYaw = _lastYaw - _lastRotationYaw;
+
+        // Ignore very small changes to avoid drift
+        if (fabs(deltaYaw) < 0.01f) { // ~0.57 degrees
+            return;
+        }
+
+        _lastRotationYaw = _lastYaw;
+        _accumulatedRotation += deltaYaw;
 
         // Convert to degrees for easier threshold checking
         float degrees = _accumulatedRotation * RAD_TO_DEG;
 
         // Debug log only when rotation changes significantly (every 5 degrees)
-        if (abs(degrees - _lastLoggedRotation) >= 5.0f) {
+        if (fabs(degrees - _lastLoggedRotation) >= 5.0f) {
             Serial.print("Rotation accumulated: ");
             Serial.print(degrees);
             Serial.println(" degrees");
@@ -286,13 +275,15 @@ private:
     uint32_t _lastMotionTime;
     bool _isInitialized;
     bool _dmpReady;
-    float _shakeThreshold;    // in g
+    float _shakeThreshold;    // delta in g above smoothed baseline required for shake
     float _motionThreshold;   // in g
 
     // Rotation tracking
     float _accumulatedRotation;       // Accumulated rotation angle in radians
     uint32_t _lastRotationUpdateTime; // Last time rotation was updated
     float _lastLoggedRotation;        // Last logged rotation value to prevent spam
+    float _lastGyroX;                 // Last gyro X reading (degrees/second)
+    float _lastGyroY;                 // Last gyro Y reading (degrees/second)
     float _lastGyroZ;                 // Last gyro Z reading (degrees/second)
 
     // Tap detection
@@ -301,6 +292,14 @@ private:
     // DMP variables
     uint16_t _packetSize;    // Expected DMP packet size (default is 42 bytes)
     uint16_t _fifoCount;     // Count of all bytes currently in FIFO
+
+    // Latest acceleration magnitude (g) for shake detection
+    float _lastAccelMagnitude;
+    float _smoothedAccel;
+
+    // Latest yaw angle from DMP (radians) for rotate mode
+    float _lastYaw;
+    float _lastRotationYaw;
 };
 
 #endif // MOTION_MANAGER_H

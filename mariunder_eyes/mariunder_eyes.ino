@@ -146,13 +146,13 @@ void setup() {
     face->RandomBlink = true;
     face->RandomLook = true;
 
-    // Configure inertia effect
+    // Configure inertia effect (stronger and more visible)
     face->Inertia.SetMotionManager(&motionManager);
     face->Inertia.Enabled = true;           // Enable inertia effect
-    face->Inertia.Sensitivity = 1.0f;       // Default sensitivity (was 0.2f - this was the issue!)
-    face->Inertia.Damping = 0.65f;          // Default damping (higher = more sluggish)
-    face->Inertia.MaxDisplacement = 8.0f;   // Maximum eye movement
-    face->Inertia.ReturnSpeed = 0.05f;      // Speed of return to center
+    face->Inertia.Sensitivity = 2.5f;       // Higher sensitivity for clearer movement
+    face->Inertia.Damping = 0.8f;           // Damping for smooth lag
+    face->Inertia.MaxDisplacement = 10.0f;  // Allow a bit more movement
+    face->Inertia.ReturnSpeed = 0.04f;      // Speed of return to center
 
     Serial.println("Face system OK");
 
