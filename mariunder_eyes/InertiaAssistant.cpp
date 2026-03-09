@@ -42,14 +42,15 @@ void InertiaAssistant::Update() {
     // Clamp delta time to prevent large jumps
     if (deltaTime > 0.1f) deltaTime = 0.1f;
 
+    // Determine if the device is actually moving using accelerometer-based logic
+    bool isMoving = _motionManager->isMoving();
+
     // Get latest gyroscope data from MotionManager (degrees/second)
     float gyroDegX = _motionManager->getGyroX();
     float gyroDegY = _motionManager->getGyroY();
 
-    // If there is essentially no rotation, slowly return to center and skip
-    float gyroMag = sqrt(gyroDegX * gyroDegX + gyroDegY * gyroDegY);
-    if (gyroMag < 5.0f) { // deadband ~5 deg/s
-        // Apply only return-to-center when no significant rotation
+    if (!isMoving) {
+        // Device is effectively still: only decay back towards center.
         _velocityX -= _positionX * ReturnSpeed;
         _velocityY -= _positionY * ReturnSpeed;
 
@@ -58,43 +59,46 @@ void InertiaAssistant::Update() {
 
         _positionX += _velocityX * deltaTime;
         _positionY += _velocityY * deltaTime;
-
-        // Clamp position
-        if (_positionX > MaxDisplacement) _positionX = MaxDisplacement;
-        if (_positionX < -MaxDisplacement) _positionX = -MaxDisplacement;
-        if (_positionY > MaxDisplacement) _positionY = MaxDisplacement;
-        if (_positionY < -MaxDisplacement) _positionY = -MaxDisplacement;
-
-        // Continue to apply transformation with updated position
     } else {
-        // Convert to rad/s
-        float gyroX = gyroDegX * (PI / 180.0f);
-        float gyroY = gyroDegY * (PI / 180.0f);
+        // Device is moving: use gyro data to drive inertia effect.
+        float gyroMag = sqrt(gyroDegX * gyroDegX + gyroDegY * gyroDegY);
 
-        // Apply rotation data to create inertia effect
-        // Gyro gives rotation rate in rad/s
-        // We'll use X and Y rotation to move the eyes
-        // When device rotates right, eyes should lag left (inertia)
-        float accelX = -gyroY * Sensitivity * 10.0f;  // Negate for natural feel
-        float accelY = gyroX * Sensitivity * 10.0f;
+        if (gyroMag < 5.0f) {
+            // Very small rotation: treat like decay-only step.
+            _velocityX -= _positionX * ReturnSpeed;
+            _velocityY -= _positionY * ReturnSpeed;
 
-        // Update velocity with acceleration and damping
-        _velocityX += accelX * deltaTime;
-        _velocityY += accelY * deltaTime;
+            _velocityX *= Damping;
+            _velocityY *= Damping;
 
-        // Apply damping to velocity
-        _velocityX *= Damping;
-        _velocityY *= Damping;
+            _positionX += _velocityX * deltaTime;
+            _positionY += _velocityY * deltaTime;
+        } else {
+            // Convert to rad/s
+            float gyroX = gyroDegX * (PI / 180.0f);
+            float gyroY = gyroDegY * (PI / 180.0f);
 
-        // Add return force towards center (spring-like behavior)
-        _velocityX -= _positionX * ReturnSpeed;
-        _velocityY -= _positionY * ReturnSpeed;
+            // Apply rotation data to create inertia effect
+            float accelX = -gyroY * Sensitivity * 10.0f;  // Negate for natural feel
+            float accelY =  gyroX * Sensitivity * 10.0f;
 
-        // Update position
-        _positionX += _velocityX * deltaTime;
-        _positionY += _velocityY * deltaTime;
+            // Update velocity with acceleration and damping
+            _velocityX += accelX * deltaTime;
+            _velocityY += accelY * deltaTime;
 
-        // Clamp position to max displacement
+            _velocityX *= Damping;
+            _velocityY *= Damping;
+
+            // Add return force towards center (spring-like behavior)
+            _velocityX -= _positionX * ReturnSpeed;
+            _velocityY -= _positionY * ReturnSpeed;
+
+            // Update position
+            _positionX += _velocityX * deltaTime;
+            _positionY += _velocityY * deltaTime;
+        }
+
+        // Clamp position to max displacement in all cases
         if (_positionX > MaxDisplacement) _positionX = MaxDisplacement;
         if (_positionX < -MaxDisplacement) _positionX = -MaxDisplacement;
         if (_positionY > MaxDisplacement) _positionY = MaxDisplacement;

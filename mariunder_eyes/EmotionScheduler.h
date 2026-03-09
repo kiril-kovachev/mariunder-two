@@ -74,7 +74,7 @@ public:
         if (_rotateMode != ROTATE_MODE_NONE) {
             uint32_t now = millis();
             if ((now - _lastRotationTime) >= _rotateModeTimeout) {
-                Serial.println("Rotate mode timeout (45s no rotation) - exiting");
+                Serial.println("Rotate mode timeout (5s no rotation) - exiting");
                 exitRotateMode();
             }
             return;  // Don't do other updates in rotate mode
@@ -146,7 +146,6 @@ public:
     void handleShake() {
         uint32_t now = millis();
         if (now - _lastShakeTime < _shakeCooldown) {
-            Serial.println("Shake detected but ignored (cooldown)");
             return;
         }
         _lastShakeTime = now;
