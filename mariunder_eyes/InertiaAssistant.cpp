@@ -133,24 +133,18 @@ void InertiaAssistant::Update() {
         _lastLoggedPositionMag = positionMagnitude;
     }
 
-    // Update destination - SetDestin updates Origin to Current, so animation smoothly interpolates
-    // Don't restart every frame - let the animation interpolate continuously
-    // This creates the lag effect: eyes smoothly follow the physics position
-    
-    // Check if destination changed significantly (more than 0.5 pixels)
-    float deltaX = t.MoveX - _face.LeftEye.InertiaTransformation.Destin.MoveX;
-    float deltaY = t.MoveY - _face.LeftEye.InertiaTransformation.Destin.MoveY;
-    float deltaMag = sqrt(deltaX * deltaX + deltaY * deltaY);
-    
-    _face.LeftEye.InertiaTransformation.SetDestin(t);
-    _face.RightEye.InertiaTransformation.SetDestin(t);
-    
-    // Only restart animation if destination changed significantly or animation completed
-    // This ensures smooth interpolation while allowing the animation to progress
-    if (deltaMag > 0.5f || _face.LeftEye.InertiaTransformation.Animation.GetValue() >= 1.0f) {
-        _face.LeftEye.InertiaTransformation.Animation.Restart();
-        _face.RightEye.InertiaTransformation.Animation.Restart();
-    }
+    // Directly apply the physics position to the transformation.
+    // The physics simulation above already produces smooth, lag-based movement.
+    // The previous SetDestin+Restart approach reset the animation to t=0 every frame,
+    // which caused Eye::Update() to evaluate Current = Origin (old position) each time,
+    // effectively freezing the eyes and preventing any visible inertia effect.
+    _face.LeftEye.InertiaTransformation.Origin  = t;
+    _face.LeftEye.InertiaTransformation.Destin  = t;
+    _face.LeftEye.InertiaTransformation.Current = t;
+
+    _face.RightEye.InertiaTransformation.Origin  = t;
+    _face.RightEye.InertiaTransformation.Destin  = t;
+    _face.RightEye.InertiaTransformation.Current = t;
 }
 
 void InertiaAssistant::Reset() {
