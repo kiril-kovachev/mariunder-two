@@ -21,3 +21,25 @@ DAC_L ----||----- ESP32 ADC
 # Move sinewave down not to go over the eyes
 
 # Bugfix - exit tap mode goes to angry
+
+# ADC - battery divider
+
+Battery + ---- R1 (100k) ----+---- ESP32 ADC
+                             |
+                            R2 (100k)
+                             |
+                            GND
+
+# GPIO 5v detect
+USB 5V (VBUS)
+      |
+     R1(100k)
+      |
+      +---- GPIO (input)
+      |
+     R2(100k)
+      |
+     GND
+     
+# Play sound on 5v usb
+# battery indicator on low battery
