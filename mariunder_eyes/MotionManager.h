@@ -178,7 +178,7 @@ public:
     }
 
     bool isShaking() {
-        if (!_isInitialized || !_dmpReady || !_gyroCalibrated) return false;
+        if (!_isInitialized || !_gyroCalibrated) return false;
 
         // Require general motion as well to avoid false shakes when stationary
         if (!isMoving()) return false;

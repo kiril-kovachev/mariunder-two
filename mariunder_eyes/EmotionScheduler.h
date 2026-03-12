@@ -461,8 +461,9 @@ private:
         // Draw pulsating filled circle for rotate mode 1 (centered)
         extern U8G2* u8g2;
 
-        // Update pulse animation
-        _pulsePhase += 0.15f;  // Speed of pulsation
+        // Pulse faster when at threshold to signal readiness
+        float pulseSpeed = _canSelectNextMp3 ? 0.35f : 0.15f;
+        _pulsePhase += pulseSpeed;
         if (_pulsePhase > TWO_PI) _pulsePhase -= TWO_PI;
 
         // Calculate radius based on whether we can select next MP3
@@ -475,6 +476,13 @@ private:
         int centerY = 32;  // Center Y (64 / 2)
 
         u8g2->drawDisc(centerX, centerY, radius);
+
+        // When at threshold, draw an outer ring to clearly signal track-select is ready
+        if (_canSelectNextMp3) {
+            int ringRadius = radius + 5;
+            u8g2->drawCircle(centerX, centerY, ringRadius);
+            u8g2->drawCircle(centerX, centerY, ringRadius + 1);  // Double ring for emphasis
+        }
     }
 
     void drawRotateMode2Overlay() {

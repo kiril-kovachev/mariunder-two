@@ -74,13 +74,9 @@ void InertiaAssistant::Update() {
             _positionX += _velocityX * deltaTime;
             _positionY += _velocityY * deltaTime;
         } else {
-            // Convert to rad/s
-            float gyroX = gyroDegX * (PI / 180.0f);
-            float gyroY = gyroDegY * (PI / 180.0f);
-
-            // Apply rotation data to create inertia effect
-            float accelX = -gyroY * Sensitivity * 10.0f;  // Negate for natural feel
-            float accelY =  gyroX * Sensitivity * 10.0f;
+            // Apply rotation data to create inertia effect (gyro already in deg/s — no rad conversion)
+            float accelX = -gyroDegY * Sensitivity * 4.0f;  // Negate for natural feel
+            float accelY =  gyroDegX * Sensitivity * 4.0f;
 
             // Update velocity with acceleration and damping
             _velocityX += accelX * deltaTime;
