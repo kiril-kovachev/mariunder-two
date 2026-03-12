@@ -7,7 +7,7 @@ An interactive animated eye display featuring 18 emotions, motion detection, aud
 - **18 Different Emotions**: Normal, Happy, Angry, Sad, Surprised, Sleepy, Scared, Furious, Excited, Disappointed, Confused, Curious, Bored, Worried, Annoyed, Suspicious, Skeptical, Frustrated
 - **Smooth Transitions**: Parametric eye animations with easing functions
 - **Motion Detection**: Shake detection triggers angry emotions
-- **Tap Detection**: Single and double tap recognition with audio feedback
+- **Tap Detection**: Single tap and long press (2s) via TTP223 capacitive touch sensor
 - **Audio Synchronization**: MP3 playback for each emotion and event
 - **Power Management**: Automatic sleep after 30s idle, deep sleep after 60s
 - **Wake-on-Motion**: ESP32-C6 wakes from deep sleep on motion detection
@@ -35,18 +35,24 @@ An interactive animated eye display featuring 18 emotions, motion detection, aud
    - SDA: I2C data
    - INT: Interrupt output
 
-4. **MP3-TF-16P Audio Module**
+4. **TTP223 Capacitive Touch Sensor**
+   - Digital output (HIGH = touched)
+   - VCC: 3.3V
+   - GND: Ground
+   - OUT: GPIO3
+
+5. **MP3-TF-16P Audio Module**
    - Serial interface (9600 baud)
    - VCC: 5V
    - GND: Ground
-   - RX: Receive data
-   - TX: Transmit data
+   - RX: Receive data (connects to ESP32 GPIO7)
+   - TX: Transmit data (connects to ESP32 GPIO6)
    - SPK+/SPK-: Speaker output
    - MicroSD card slot
 
-5. **Speaker** (8Ω, 0.5-3W)
+6. **Speaker** (8Ω, 0.5-3W)
 
-6. **MicroSD Card** (formatted FAT32)
+7. **MicroSD Card** (formatted FAT32)
 
 ### Wiring Diagram
 
@@ -60,8 +66,9 @@ ESP32-C6 Pin Connections:
 │ GPIO1 (SDA)     │ OLED SDA         │ I2C Data        │
 │ GPIO1 (SDA)     │ MPU6050 SDA      │ I2C Data        │
 │ GPIO2           │ MPU6050 INT      │ Motion Int      │
-│ GPIO19 (TX)     │ MP3 Module RX    │ UART TX         │
-│ GPIO20 (RX)     │ MP3 Module TX    │ UART RX         │
+│ GPIO3           │ TTP223 OUT       │ Touch Input     │
+│ GPIO6 (RX)      │ MP3 Module TX    │ UART RX         │
+│ GPIO7 (TX)      │ MP3 Module RX    │ UART TX         │
 │ 3.3V            │ OLED VCC         │ Power           │
 │ 3.3V            │ MPU6050 VCC      │ Power           │
 │ GND             │ All GND pins     │ Common Ground   │
@@ -125,30 +132,36 @@ Prepare a MicroSD card (FAT32 format) with this structure:
 
 ```
 SD Card Root:
-├── 01/                    # Emotion sounds
-│   ├── 001.mp3           # Normal
-│   ├── 002.mp3           # Happy
-│   ├── 003.mp3           # Angry
-│   ├── 004.mp3           # Sad
-│   ├── 005.mp3           # Surprised
-│   ├── 006.mp3           # Sleepy
-│   ├── 007.mp3           # Scared
-│   ├── 008.mp3           # Furious
-│   ├── 009.mp3           # Excited
-│   ├── 010.mp3           # Disappointed
-│   ├── 011.mp3           # Confused
-│   ├── 012.mp3           # Curious
-│   ├── 013.mp3           # Bored
-│   ├── 014.mp3           # Worried
-│   ├── 015.mp3           # Annoyed
-│   ├── 016.mp3           # Suspicious
-│   ├── 017.mp3           # Skeptical
-│   └── 018.mp3           # Frustrated
-├── 02/                    # Tap sounds
-│   ├── 001.mp3           # Single tap
-│   └── 002.mp3           # Double tap
+├── 01/                    # Emotion sounds (played on random emotion changes)
+│   ├── 001.mp3           # Normal        (enum index 0)
+│   ├── 002.mp3           # Happy         (enum index 1)
+│   ├── 003.mp3           # Angry         (enum index 2)
+│   ├── 004.mp3           # Sad           (enum index 3)
+│   ├── 005.mp3           # Surprised     (enum index 4)
+│   ├── 006.mp3           # Sleepy        (enum index 5)
+│   ├── 007.mp3           # Scared        (enum index 6)
+│   ├── 008.mp3           # Furious       (enum index 7)
+│   ├── 009.mp3           # Excited       (enum index 8)
+│   ├── 010.mp3           # Disappointed  (enum index 9)
+│   ├── 011.mp3           # Confused      (enum index 10)
+│   ├── 012.mp3           # Curious       (enum index 11)
+│   ├── 013.mp3           # Bored         (enum index 12)
+│   ├── 014.mp3           # Worried       (enum index 13)
+│   ├── 015.mp3           # Annoyed       (enum index 14)
+│   ├── 016.mp3           # Suspicious    (enum index 15)
+│   ├── 017.mp3           # Skeptical     (enum index 16)
+│   └── 018.mp3           # Frustrated    (enum index 17)
+├── 02/                    # User playlist (browsed in MP3 mode, single tap → rotate)
+│   ├── 001.mp3           # User track 1
+│   ├── 002.mp3           # User track 2
+│   └── ...               # Up to 10 tracks (001–010.mp3)
 └── 03/                    # System sounds
-    └── 001.mp3           # Sleep transition
+    ├── 001.mp3           # Sleep transition
+    ├── 002.mp3           # Enter MP3 mode (single tap)
+    ├── 003.mp3           # Enter volume mode (long press 2s)
+    ├── 004.mp3           # Volume test tone (played on each volume step)
+    ├── 005.mp3           # Shake reaction (angry sound, distinct from folder 01)
+    └── 006.mp3           # Exit MP3 mode or volume mode
 ```
 
 ### MP3 File Requirements
@@ -201,14 +214,20 @@ Once powered on, the eyes will:
 
 **Shake Detection:**
 - Shake the device to trigger angry/furious emotion
-- Plays angry sound effect
+- Plays dedicated shake sound (`03/005.mp3`) — distinct from the regular emotion sounds in folder 01
+- Eyes buzz/vibrate for the duration of the sound; no emotion changes during playback
+- 10s cooldown between shake reactions
 - Resets power idle timer
 
-**Tap Detection:**
-- Single tap: Plays tap sound 1, enters tap mode
-- Double tap: Plays tap sound 2, enters tap mode
-- During tap mode: No random emotion changes for 5 seconds
-- Shake during tap playback: Stops audio immediately
+**Tap (TTP223 Touch Sensor):**
+- **Single tap**: Enters MP3 mode — rotate 15° to browse and play tracks from folder 02; plays entry sound (`03/002.mp3`)
+  - While a track is playing: further rotation is ignored until playback ends or is cancelled
+  - Single tap during playback: cancels the current track and returns to track selection
+  - Single tap while idle in MP3 mode: exits mode
+- **Long press (2s)**: Enters volume control mode — rotate 15° right = volume up, left = volume down; plays entry sound (`03/003.mp3`)
+  - Each volume step plays a test tone (`03/004.mp3`) at the new volume level
+  - Single tap exits volume mode
+- Both modes auto-exit after 45 seconds of no rotation
 
 **Power Management:**
 - After 30 seconds of no motion: Switches to sleepy eyes

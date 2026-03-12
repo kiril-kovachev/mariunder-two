@@ -11,7 +11,7 @@ public:
     enum TapType {
         NONE = 0,
         SINGLE_TAP = 1,
-        DOUBLE_TAP = 2
+        LONG_PRESS = 2
     };
 
     TouchSensorManager() :
@@ -19,11 +19,10 @@ public:
         _tapEvent(NONE),
         _lastTouchState(false),
         _touchStartTime(0),
-        _lastTapTime(0),
-        _tapCount(0),
+        _pressStartTime(0),
+        _longPressTriggered(false),
         _touchDebounceTime(50),      // 50ms debounce
-        _doubleTapWindow(600),       // 600ms window for double tap
-        _minTapInterval(100)         // Minimum 100ms between taps
+        _longPressThreshold(2000)    // 2s continuous press = long press
     {}
 
     bool begin() {
@@ -47,21 +46,30 @@ public:
         if (currentState != _lastTouchState) {
             if ((now - _touchStartTime) > _touchDebounceTime) {
                 if (currentState == HIGH) {
-                    // Touch detected (rising edge)
-                    handleTouchDetected(now);
+                    // Press started - record start time
+                    _pressStartTime = now;
+                    _longPressTriggered = false;
+                } else {
+                    // Press released
+                    if (_pressStartTime > 0 && !_longPressTriggered) {
+                        // Released before long press threshold -> single tap
+                        _tapEvent = SINGLE_TAP;
+                        Serial.println("Single tap detected!");
+                    }
+                    _pressStartTime = 0;
                 }
                 _lastTouchState = currentState;
                 _touchStartTime = now;
             }
         }
 
-        // Check if single tap window expired
-        if (_tapCount == 1 && (now - _lastTapTime) >= _doubleTapWindow) {
-            if (_tapEvent == NONE) {  // Don't override double tap
-                _tapEvent = SINGLE_TAP;
-                Serial.println("Single tap detected!");
+        // Check for long press while key is still held
+        if (_pressStartTime > 0 && !_longPressTriggered) {
+            if ((now - _pressStartTime) >= _longPressThreshold) {
+                _tapEvent = LONG_PRESS;
+                _longPressTriggered = true;
+                Serial.println("Long press detected!");
             }
-            _tapCount = 0;
         }
     }
 
@@ -77,35 +85,14 @@ public:
     }
 
 private:
-    void handleTouchDetected(uint32_t now) {
-        // Check if enough time passed since last tap
-        if ((now - _lastTapTime) < _minTapInterval) {
-            return; // Too soon, ignore
-        }
-
-        // Check if this could be part of a double tap
-        if ((now - _lastTapTime) < _doubleTapWindow && _tapCount == 1) {
-            // Second tap detected - it's a double tap!
-            _tapEvent = DOUBLE_TAP;
-            _tapCount = 0;  // Reset
-            Serial.println("Double tap detected!");
-        } else {
-            // First tap detected
-            _tapCount = 1;
-            _lastTapTime = now;
-            // Wait to see if there's a second tap
-        }
-    }
-
     bool _isInitialized;
     TapType _tapEvent;
     bool _lastTouchState;
-    uint32_t _touchStartTime;
-    uint32_t _lastTapTime;
-    int _tapCount;
+    uint32_t _touchStartTime;       // Last debounce edge time
+    uint32_t _pressStartTime;       // When the current press started (0 = not pressed)
+    bool _longPressTriggered;       // True if long press already fired for this press
     uint32_t _touchDebounceTime;
-    uint32_t _doubleTapWindow;
-    uint32_t _minTapInterval;
+    uint32_t _longPressThreshold;   // Duration for long press (2000ms)
 };
 
 #endif // TOUCH_SENSOR_MANAGER_H

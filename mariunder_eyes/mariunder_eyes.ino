@@ -5,15 +5,15 @@
  * - ESP32-C6 Supermini
  * - GME 12865-50 (SSD1306 128x64 OLED) - I2C (SDA=GPIO1, SCL=GPIO0)
  * - MPU6050 Motion Sensor - I2C (SDA=GPIO1, SCL=GPIO0)
- * - TTP223 Touch Sensor - Digital (GPIO7)
- * - MP3-TF-16P Audio Module - Serial (RX=GPIO20, TX=GPIO19)
+ * - TTP223 Touch Sensor - Digital (GPIO3)
+ * - MP3-TF-16P Audio Module - Serial (RX=GPIO6, TX=GPIO7)
  *
  * Features:
  * - 18 different eye emotions with smooth transitions
  * - Random emotion changes every 15 seconds
  * - Inertia eye effect based on device rotation (gyroscope)
  * - Shake detection triggers angry emotions
- * - Single/double tap detection via TTP223 touch sensor
+ * - Single tap / long press (2s) detection via TTP223 touch sensor
  * - Synchronized MP3 playback for each emotion
  * - Power management: 30s idle -> sleepy, 60s -> deep sleep
  * - Wake-on-motion from deep sleep
@@ -180,7 +180,7 @@ void setup() {
     Serial.println("    - In rotate mode 1: rotate 15 degrees to play/change MP3 file from folder 02");
     Serial.println("    - Single tap again to exit rotate mode");
     Serial.println("    - Auto-exit after 5s of no rotation");
-    Serial.println("  - Double tap (touch sensor): Enter rotate mode 2");
+    Serial.println("  - Long press 2s (touch sensor): Enter rotate mode 2");
     Serial.println("    - In rotate mode 2: rotate 15 degrees right=volume up, left=volume down");
     Serial.println("    - Single tap to exit rotate mode");
     Serial.println("    - Auto-exit after 45s of no rotation");

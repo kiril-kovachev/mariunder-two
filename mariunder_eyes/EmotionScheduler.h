@@ -41,7 +41,10 @@ public:
         _pulsePhase(0.0f),
         _canSelectNextMp3(false),
         _lastShakeTime(0),
-        _shakeCooldown(10000)        // 10s cooldown between shake reactions
+        _shakeCooldown(10000),       // 10s cooldown between shake reactions
+        _isInShakenMode(false),
+        _rotateMode1Playing(false),
+        _wavePhase(0.0f)
     {}
 
     void begin(Face* face, AudioManager* audio, PowerManager* power) {
@@ -72,12 +75,38 @@ public:
 
         // Check rotate mode timeout (45 seconds of no rotation)
         if (_rotateMode != ROTATE_MODE_NONE) {
+            // In rotate mode 1 playing state: check if playback has ended
+            if (_rotateMode == ROTATE_MODE_1 && _rotateMode1Playing) {
+                if (!_audioManager->isPlaying()) {
+                    // Track finished - return to idle/selection state
+                    _rotateMode1Playing = false;
+                    _face->HideEyes = true;
+                    _face->OverlayCallback = staticDrawRotateMode1Overlay;
+                    _lastRotationTime = millis();  // Reset timeout so mode doesn't immediately exit
+                    _canSelectNextMp3 = false;
+                    Serial.println("Rotate mode 1 playback finished - ready for next selection");
+                }
+                return;  // Don't time out while playing
+            }
             uint32_t now = millis();
             if ((now - _lastRotationTime) >= _rotateModeTimeout) {
                 Serial.println("Rotate mode timeout (5s no rotation) - exiting");
                 exitRotateMode();
             }
             return;  // Don't do other updates in rotate mode
+        }
+
+        // While in shaken mode: hold angry expression until MP3 finishes, then resume normal
+        if (_isInShakenMode) {
+            if (!_audioManager->isPlaying()) {
+                // Audio finished - clear buzz and exit shaken mode
+                _face->RightEye.Variation2.Clear();
+                _face->LeftEye.Variation2.Clear();
+                _isInShakenMode = false;
+                Serial.println("Shaken mode ended - audio finished");
+                _randomChangeTimer.restart();
+            }
+            return;  // Stay in angry, don't allow any other emotion changes
         }
 
         // Check power state - force SLEEPY emotion if in sleepy mode OR deep sleep mode
@@ -157,7 +186,18 @@ public:
         FaceEmotions emotion = shakeEmotions[random(0, 2)];
 
         changeEmotionTo(emotion);
-        _audioManager->playEmotion(emotion);
+        _audioManager->playFolderFile(3, 5);  // Dedicated shake sound (03/005.mp3), distinct from folder 01 emotion sounds
+
+        // Enter shaken mode: hold angry and apply buzzing until the MP3 finishes
+        _isInShakenMode = true;
+
+        // Apply rapid horizontal vibration via Variation2 (80ms period, ±2px)
+        _face->RightEye.Variation2.Values.OffsetX = 2;
+        _face->RightEye.Variation2.Animation.SetTriangle(80, 0);
+        _face->RightEye.Variation2.Animation.Restart();
+        _face->LeftEye.Variation2.Values.OffsetX = 2;
+        _face->LeftEye.Variation2.Animation.SetTriangle(80, 0);
+        _face->LeftEye.Variation2.Animation.Restart();
 
         // Reset random timer to prevent immediate change
         _randomChangeTimer.restart();
@@ -165,25 +205,25 @@ public:
 
     void handleTap(int tap) {
         // Accept tap as int for compatibility with both TouchSensorManager and MotionManager
-        // 0 = NONE, 1 = SINGLE_TAP, 2 = DOUBLE_TAP
+        // 0 = NONE, 1 = SINGLE_TAP, 2 = LONG_PRESS
         if (tap == 0) return;  // NONE
 
         // Trigger hit-on-head visual effect for any tap
         _face->HitOnHead();
 
-        if (tap == 2) {  // DOUBLE_TAP
-            // Double tap: enter rotate mode 2 (volume control) OR stop playback if not in rotate mode
+        if (tap == 2) {  // LONG_PRESS
+            // Long press: enter rotate mode 2 (volume control) OR stop playback if not in rotate mode
             if (_rotateMode == ROTATE_MODE_NONE) {
                 // Not in rotate mode - stop any playing audio first, then enter rotate mode 2
                 if (_audioManager->isPlaying()) {
-                    Serial.println("Double tap - stopping playback");
+                    Serial.println("Long press - stopping playback");
                     _audioManager->stopPlayback();
                 }
-                Serial.println("Double tap - entering rotate mode 2 (volume control)");
+                Serial.println("Long press - entering rotate mode 2 (volume control)");
                 enterRotateMode2();
             } else {
-                // Already in a rotate mode - ignore double tap
-                Serial.println("Double tap ignored - already in rotate mode");
+                // Already in a rotate mode - ignore long press
+                Serial.println("Long press ignored - already in rotate mode");
             }
             return;
         }
@@ -197,8 +237,17 @@ public:
             }
             Serial.println("Single tap - entering rotate mode 1 (MP3 file change)");
             enterRotateMode1();
+        } else if (_rotateMode == ROTATE_MODE_1 && _rotateMode1Playing) {
+            // Single tap during playback: cancel track and return to selection state
+            Serial.println("Single tap - cancelling playback, returning to MP3 selection");
+            _audioManager->stopPlayback();
+            _rotateMode1Playing = false;
+            _face->HideEyes = true;
+            _face->OverlayCallback = staticDrawRotateMode1Overlay;
+            _lastRotationTime = millis();
+            _canSelectNextMp3 = false;
         } else {
-            // In rotate mode - exit it
+            // In rotate mode (idle) - exit it
             Serial.println("Single tap - exiting rotate mode");
             exitRotateMode();
         }
@@ -238,6 +287,13 @@ public:
         const float ROTATION_THRESHOLD = 15.0f;
 
         if (_rotateMode == ROTATE_MODE_1) {
+            // Block track changes while a track is playing
+            if (_rotateMode1Playing) {
+                // Keep resetting the timeout timer so mode doesn't expire during playback
+                _lastRotationTime = millis();
+                return;
+            }
+
             // Update visual feedback - can select next MP3 when rotation is close to threshold
             _canSelectNextMp3 = abs(degrees) >= (ROTATION_THRESHOLD * 0.7f);  // Visual feedback at 70% threshold
 
@@ -261,13 +317,20 @@ public:
                 // Play the file from folder 02
                 Serial.print("Playing folder 02, file ");
                 Serial.println(_currentFolderFile);
-                _audioManager->stopPlayback();  // Stop current playback
+                _audioManager->stopPlayback();
                 delay(50);
                 _audioManager->playFolderFile(2, _currentFolderFile);
 
                 // Reset rotation accumulator and visual feedback
                 motionManager->resetAccumulatedRotation();
-                _canSelectNextMp3 = false;  // Reset to normal size after selection
+                _canSelectNextMp3 = false;
+
+                // Transition to playing state: show eyes with wave overlay
+                _rotateMode1Playing = true;
+                _wavePhase = 0.0f;
+                _face->HideEyes = false;
+                _face->OverlayCallback = staticDrawPlaybackOverlay;
+                Serial.println("Playback started - showing eyes with wave animation");
             }
         } else if (_rotateMode == ROTATE_MODE_2) {
             // Rotate mode 2: Change volume on 15-degree rotation
@@ -285,6 +348,11 @@ public:
                     _audioManager->decreaseVolume();
                 }
 
+                // Play test sound at the new volume so the user can judge the level
+                _audioManager->stopPlayback();
+                delay(50);
+                _audioManager->playFolderFile(3, 4);
+
                 // Reset rotation accumulator
                 motionManager->resetAccumulatedRotation();
             }
@@ -298,7 +366,9 @@ private:
         _rotateModeStartTime = millis();
         _lastRotationTime = millis();  // Initialize rotation timer
         _pulsePhase = 0.0f;            // Reset pulse animation
-        _canSelectNextMp3 = false;     // Not ready yet (changed from true)
+        _canSelectNextMp3 = false;
+        _rotateMode1Playing = false;   // Start in selection (idle) state
+        _wavePhase = 0.0f;
 
         // Hide eyes and set overlay callback
         _face->HideEyes = true;
@@ -312,6 +382,9 @@ private:
         _face->LookRight();
         delay(100);
         _face->LookFront();
+
+        // Play mode-entry sound from folder 03, file 002
+        _audioManager->playFolderFile(3, 2);
 
         // Don't start playing MP3 yet - wait for rotation
         Serial.println("Entering rotate mode 1 - rotate 15 degrees to play MP3 from folder 02");
@@ -335,6 +408,9 @@ private:
         _face->LookBottom();
         delay(100);
         _face->LookFront();
+
+        // Play mode-entry sound from folder 03, file 003
+        _audioManager->playFolderFile(3, 3);
 
         Serial.print("Rotate mode 2 active - rotate 15 degrees to change volume (current: ");
         Serial.print(_audioManager->getCurrentVolume());
@@ -361,19 +437,22 @@ private:
 
             // Don't stop playback - let it continue playing
             Serial.println("Exiting rotate mode 1 - playback continues");
-        } else if (previousMode == ROTATE_MODE_2) {
-            // Rotate mode 2 exit: eyes do a circle motion
-            _face->LookLeft();
-            delay(80);
-            _face->LookTop();
-            delay(80);
-            _face->LookRight();
-            delay(80);
-            _face->LookBottom();
-            delay(80);
-            _face->LookFront();
+        // Play exit sound
+        _audioManager->playFolderFile(3, 6);
+    } else if (previousMode == ROTATE_MODE_2) {
+        // Rotate mode 2 exit: eyes do a circle motion
+        _face->LookLeft();
+        delay(80);
+        _face->LookTop();
+        delay(80);
+        _face->LookRight();
+        delay(80);
+        _face->LookBottom();
+        delay(80);
+        _face->LookFront();
 
-            Serial.println("Exiting rotate mode 2");
+        // Play exit sound
+        _audioManager->playFolderFile(3, 6);
         }
 
         Serial.println("Rotate mode exited - normal behavior resumed");
@@ -453,6 +532,11 @@ private:
     // Shake handling
     uint32_t _lastShakeTime;            // Last time a shake was handled
     uint32_t _shakeCooldown;            // Minimum ms between shake reactions
+    bool _isInShakenMode;               // True while holding angry + buzzing during MP3 playback
+
+    // Rotate mode 1 playback state
+    bool _rotateMode1Playing;           // True while a folder-02 track is playing
+    float _wavePhase;                   // Phase for scrolling wave animation during playback
 
     // Static overlay rendering methods (to be used as callbacks)
     static EmotionScheduler* _instance;  // Singleton instance for static callbacks
@@ -512,6 +596,25 @@ private:
         u8g2->setFont(u8g2_font_ncenB08_tr);
     }
 
+    void drawPlaybackOverlay() {
+        // Show animated scrolling sine wave in the bottom strip to indicate active playback
+        extern U8G2* u8g2;
+
+        _wavePhase += 0.25f;
+        if (_wavePhase > TWO_PI) _wavePhase -= TWO_PI;
+
+        const int waveY = 58;    // Center line in bottom strip
+        const int amplitude = 4; // ±4 pixels
+
+        for (int x = 0; x < 128; x++) {
+            float angle = _wavePhase + (x * TWO_PI / 32.0f);  // Full period every 32 pixels
+            int y = waveY + (int)(sinf(angle) * amplitude);
+            if (y >= 0 && y < 64) {
+                u8g2->drawPixel(x, y);
+            }
+        }
+    }
+
     // Static wrappers for callbacks
     static void staticDrawRotateMode1Overlay() {
         if (_instance) _instance->drawRotateMode1Overlay();
@@ -519,6 +622,10 @@ private:
 
     static void staticDrawRotateMode2Overlay() {
         if (_instance) _instance->drawRotateMode2Overlay();
+    }
+
+    static void staticDrawPlaybackOverlay() {
+        if (_instance) _instance->drawPlaybackOverlay();
     }
 };
 
