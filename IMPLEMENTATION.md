@@ -29,16 +29,17 @@ Successfully implemented a comprehensive ESP32-C6 animated eyes project with 18 
 13. `Face.h` - Main controller (2.2 KB)
 
 ### New Components
-14. `MotionManager.h` - MPU6050 integration with shake/tap detection (5.6 KB)
-15. `AudioManager.h` - MP3-TF-16P integration (3.6 KB)
-16. `PowerManager.h` - Power states and deep sleep (3.7 KB)
-17. `EmotionScheduler.h` - Emotion logic and audio sync (4.2 KB)
+14. `MotionManager.h` - MPU6050 integration with shake detection and inertia (5.6 KB)
+15. `TouchSensorManager.h` - TTP223 capacitive touch sensor, single tap & long press (1.8 KB)
+16. `AudioManager.h` - MP3-TF-16P integration with folder-based playback (3.6 KB)
+17. `PowerManager.h` - Power states and deep sleep (3.7 KB)
+18. `EmotionScheduler.h` - Emotion logic, shaken mode, rotate modes, audio sync (7.1 KB)
 
 ### Application
-18. `mariunder_eyes.ino` - Main sketch with full integration (6.7 KB)
+19. `mariunder_eyes.ino` - Main sketch with full integration (6.7 KB)
 
 ### Documentation
-19. `README.md` - Comprehensive setup and usage guide (17.7 KB)
+20. `README.md` - Comprehensive setup and usage guide
 
 ## Key Features Implemented
 
@@ -68,25 +69,34 @@ Successfully implemented a comprehensive ESP32-C6 animated eyes project with 18 
 
 ### ✅ Phase 5: Emotion Scheduling
 - Random emotion changes (15s interval)
-- Shake-triggered angry emotions
+- Shake-triggered angry/furious emotions
+- Shaken mode: holds angry expression + eye buzzing vibration for duration of shake sound
+- Dedicated shake sound (`03/005.mp3`) distinct from regular emotion sounds (`01/`)
 - Audio synchronization
 - Power state integration
 
-### ✅ Phase 6: Tap Detection
-- Software-based tap detection algorithm
-- Single and double tap recognition
-- 400ms double-tap window
-- Debouncing and false positive filtering
+### ✅ Phase 6: Touch Detection (TTP223)
+- Hardware capacitive touch sensor on GPIO3
+- Single tap: detected on release before 2s threshold
+- Long press: fires at 2s continuous hold, no release required
+- Debounce (50ms) with clean rising/falling edge tracking
 
-### ✅ Phase 7: Tap Mode
-- Tap mode pauses random emotions
-- 5-second timeout
-- Shake-to-interrupt functionality
-- Activity timer reset
+### ✅ Phase 7: Rotate Modes
+- **Rotate Mode 1** (single tap): browse and play user tracks from folder 02
+  - Eyes hidden, pulsating circle overlay during track selection
+  - Rotation locked during playback; eyes shown with scrolling sine wave overlay
+  - Single tap cancels playback and returns to selection; second single tap exits mode
+  - Auto-exit after 45s of no rotation
+- **Rotate Mode 2** (long press 2s): volume control
+  - Eyes hidden, large volume number overlay
+  - Each 15° rotation step adjusts volume and plays test tone (`03/004.mp3`)
+  - Single tap exits mode
+  - Auto-exit after 45s of no rotation
+- Entry/exit sounds: `03/002.mp3` (enter mode 1), `03/003.mp3` (enter mode 2), `03/006.mp3` (exit either mode)
 
 ### ✅ Phase 8: Deep Sleep
 - ESP32-C6 deep sleep configuration
-- ext0 wake on GPIO2 (MPU6050 INT)
+- ext1 wake on GPIO2 (MPU6050 INT) and GPIO3 (TTP223)
 - Motion interrupt wake-up
 - Clean state transitions
 
@@ -98,12 +108,9 @@ Successfully implemented a comprehensive ESP32-C6 animated eyes project with 18 
 - Main event loop
 
 ### ✅ Phase 10: Documentation
-- Comprehensive README
-- Hardware wiring diagram
-- Software setup instructions
-- SD card file structure
-- Troubleshooting guide
-- Customization options
+- Comprehensive README with accurate SD card structure and pin mapping
+- QUICKSTART guide
+- IMPLEMENTATION summary
 
 ## Technical Highlights
 
@@ -114,9 +121,10 @@ Successfully implemented a comprehensive ESP32-C6 animated eyes project with 18 
 - **Event-driven**: Non-blocking updates and timers
 
 ### Hardware Integration
-- **Shared I2C bus**: Display and sensor on same bus (100kHz)
-- **Hardware serial**: Dedicated UART for MP3 module
-- **Interrupt-driven**: Motion wake-up from deep sleep
+- **Shared I2C bus**: Display and MPU6050 on same bus (100kHz), GPIO0/GPIO1
+- **TTP223 touch sensor**: GPIO3, 3.3V digital input
+- **Hardware serial**: Dedicated UART for MP3 module on GPIO6 (RX) / GPIO7 (TX)
+- **Interrupt-driven**: Motion wake-up from deep sleep via GPIO2
 - **Power optimization**: <1mA in deep sleep mode
 
 ### Software Patterns
@@ -152,10 +160,10 @@ Successfully implemented a comprehensive ESP32-C6 animated eyes project with 18 
 - SD card must be FAT32 format
 - Some modules require specific folder structure
 
-### Tap Detection
-- Software implementation (MPU6050 library limitations)
-- May require threshold tuning per installation
-- Speaker vibrations can cause false positives
+### Tap Detection (TTP223)
+- Hardware capacitive touch (no false positives from speaker vibration)
+- Single tap fires on release; long press fires at 2s threshold while held
+- GPIO3, 3.3V powered
 
 ## Future Enhancement Potential
 
@@ -183,6 +191,6 @@ This is a complete, production-ready implementation of the Mariunder Eyes projec
 
 ---
 
-**Implementation Date**: 2026-02-18
-**Total Development Time**: ~1 hour (automated implementation)
+**Implementation Date**: 2026-02-18  
+**Last Updated**: 2026-03-12  
 **Code Quality**: Production-ready with comprehensive documentation
