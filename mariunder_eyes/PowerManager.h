@@ -90,6 +90,12 @@ public:
         }
     }
 
+    void requestSleep() {
+        // Manual deep sleep request (triggered by 4s tap)
+        Serial.println("Manual sleep requested via long tap - entering POWER_DEEP_SLEEP");
+        _currentState = POWER_DEEP_SLEEP;
+    }
+
     uint32_t getIdleTime() const {
         return millis() - _lastActivityTime;
     }

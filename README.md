@@ -67,6 +67,7 @@ ESP32-C6 Pin Connections:
 │ GPIO1 (SDA)     │ MPU6050 SDA      │ I2C Data        │
 │ GPIO2           │ MPU6050 INT      │ Motion Int      │
 │ GPIO3           │ TTP223 OUT       │ Touch Input     │
+│ GPIO5           │ Audio ADC Input  │ DAC_L from DFP  │
 │ GPIO6 (RX)      │ MP3 Module TX    │ UART RX         │
 │ GPIO7 (TX)      │ MP3 Module RX    │ UART TX         │
 │ 3.3V            │ OLED VCC         │ Power           │

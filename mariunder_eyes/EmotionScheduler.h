@@ -67,6 +67,10 @@ public:
         _readyForMotionTrigger = false;
         _wasMoving = false;
 
+        // Initialize ADC for audio waveform display (DAC_L from DFPlayer via AC-coupling)
+        analogSetPinAttenuation(AUDIO_ADC_PIN, ADC_11db);  // Full 0-3.3V range
+        pinMode(AUDIO_ADC_PIN, INPUT);
+
         Serial.println("EmotionScheduler initialized");
     }
 
@@ -205,10 +209,38 @@ public:
 
     void handleTap(int tap) {
         // Accept tap as int for compatibility with both TouchSensorManager and MotionManager
-        // 0 = NONE, 1 = SINGLE_TAP, 2 = LONG_PRESS
+        // 0 = NONE, 1 = SINGLE_TAP, 2 = LONG_PRESS, 3 = VERY_LONG_PRESS
         if (tap == 0) return;  // NONE
 
-        // Trigger hit-on-head visual effect for any tap
+        if (tap == 3) {  // VERY_LONG_PRESS (4s) - manual deep sleep trigger
+            Serial.println("Very long press (4s) - triggering sleep sequence");
+
+            // Clear shaken mode if active
+            if (_isInShakenMode) {
+                _face->RightEye.Variation2.Clear();
+                _face->LeftEye.Variation2.Clear();
+                _isInShakenMode = false;
+            }
+
+            // Exit any rotate mode cleanly
+            if (_rotateMode != ROTATE_MODE_NONE) {
+                _rotateMode = ROTATE_MODE_NONE;
+                _face->HideEyes = false;
+                _face->OverlayCallback = nullptr;
+            }
+
+            // Stop any playing audio
+            if (_audioManager->isPlaying()) {
+                _audioManager->stopPlayback();
+            }
+
+            // Request deep sleep - EmotionScheduler::update() will handle
+            // the sleepy eyes + sleep sound before the main loop executes sleep
+            _powerManager->requestSleep();
+            return;
+        }
+
+        // Trigger hit-on-head visual effect for any other tap
         _face->HitOnHead();
 
         if (tap == 2) {  // LONG_PRESS
@@ -597,18 +629,19 @@ private:
     }
 
     void drawPlaybackOverlay() {
-        // Show animated scrolling sine wave in the bottom strip to indicate active playback
+        // Show real-time audio waveform sampled from GPIO5 (DFPlayer DAC_L, AC-coupled)
         extern U8G2* u8g2;
 
-        _wavePhase += 0.25f;
-        if (_wavePhase > TWO_PI) _wavePhase -= TWO_PI;
-
-        const int waveY = 58;    // Center line in bottom strip
-        const int amplitude = 4; // ±4 pixels
+        const int waveY = 60;    // Center line - low enough to avoid overlapping the eyes
+        const int amplitude = 3; // ±3 pixels maximum deflection
+        // ADC divisor: ±200 raw counts (out of ±2048) maps to ±3 pixels
+        const int divisor = 67;  // 200/3 ≈ 67 counts per pixel
 
         for (int x = 0; x < 128; x++) {
-            float angle = _wavePhase + (x * TWO_PI / 32.0f);  // Full period every 32 pixels
-            int y = waveY + (int)(sinf(angle) * amplitude);
+            int raw = analogRead(AUDIO_ADC_PIN);
+            int centered = raw - 2048;  // Remove DC bias (midpoint of 12-bit range)
+            int yOffset = constrain(centered / divisor, -amplitude, amplitude);
+            int y = waveY - yOffset;    // Negative: louder signal draws upward from baseline
             if (y >= 0 && y < 64) {
                 u8g2->drawPixel(x, y);
             }

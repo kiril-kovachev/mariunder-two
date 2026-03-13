@@ -184,6 +184,9 @@ void setup() {
     Serial.println("    - In rotate mode 2: rotate 15 degrees right=volume up, left=volume down");
     Serial.println("    - Single tap to exit rotate mode");
     Serial.println("    - Auto-exit after 45s of no rotation");
+    Serial.println("  - Long press 4s (touch sensor): Manual deep sleep");
+    Serial.println("    - Eyes switch to sleepy, plays sleep sound, then enters deep sleep");
+    Serial.println("    - Wake: shake device (MPU6050) or tap sensor (TTP223)");
     Serial.println("  - Shake during rotate mode: Exit rotate mode");
     Serial.println("  - 30s idle: Enter sleepy mode");
     Serial.println("  - 60s idle: Deep sleep (wake on motion)");

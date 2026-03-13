@@ -21,6 +21,9 @@
 // MPU6050 interrupt pin
 #define MPU_INT_PIN 2 // Define the interrupt pin for MPU6050
 
+// Audio ADC input pin (connected to DFRobotDFPlayerMini DAC_L via AC-coupling circuit)
+#define AUDIO_ADC_PIN 5
+
 // Math helpers
 #ifndef PI
 #define PI 3.14159265359
