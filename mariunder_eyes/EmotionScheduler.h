@@ -68,8 +68,12 @@ public:
         _wasMoving = false;
 
         // Initialize ADC for audio waveform display (DAC_L from DFPlayer via AC-coupling)
-        analogSetPinAttenuation(AUDIO_ADC_PIN, ADC_11db);  // Full 0-3.3V range
+        // analogReadResolution and default 11dB attenuation cover the full 0-3.3V range
+        analogReadResolution(12);
         pinMode(AUDIO_ADC_PIN, INPUT);
+        // Warm up ADC — first reads after power-on can be inaccurate
+        for (int i = 0; i < 8; i++) { analogRead(AUDIO_ADC_PIN); }
+        Serial.printf("Audio ADC initialized on GPIO%d\n", AUDIO_ADC_PIN);
 
         Serial.println("EmotionScheduler initialized");
     }
@@ -629,19 +633,40 @@ private:
     }
 
     void drawPlaybackOverlay() {
-        // Show real-time audio waveform sampled from GPIO5 (DFPlayer DAC_L, AC-coupled)
+        // Show real-time audio waveform from GPIO5 (DFPlayer DAC_L, AC-coupled to ~1.65V bias)
         extern U8G2* u8g2;
 
-        const int waveY = 60;    // Center line - low enough to avoid overlapping the eyes
-        const int amplitude = 3; // ±3 pixels maximum deflection
-        // ADC divisor: ±200 raw counts (out of ±2048) maps to ±3 pixels
-        const int divisor = 67;  // 200/3 ≈ 67 counts per pixel
+        // --- 1. Capture 128 ADC samples as fast as possible for a coherent snapshot ---
+        int16_t samples[128];
+        for (int i = 0; i < 128; i++) {
+            samples[i] = (int16_t)analogRead(AUDIO_ADC_PIN);
+        }
+
+        // --- 2. Compute mean to dynamically remove DC bias ---
+        int32_t sum = 0;
+        for (int i = 0; i < 128; i++) sum += samples[i];
+        int16_t mean = (int16_t)(sum / 128);
+
+        // --- 3. Find peak deviation from mean for auto-scaling ---
+        int16_t peak = 0;
+        for (int i = 0; i < 128; i++) {
+            int16_t dev = abs((int16_t)(samples[i] - mean));
+            if (dev > peak) peak = dev;
+        }
+        // Noise floor: below 30 ADC counts (~25mV) treat as silence and show flat line
+        if (peak < 30) peak = 0;
+        // Scale divisor: map ±peak to ±amplitude pixels (avoid divide-by-zero)
+        int16_t scale = (peak < 1) ? 1 : peak;
+
+        const int waveY = 60;   // Baseline row — below the eye area
+        const int amplitude = 4; // ±4 pixel max deflection (rows 56–64)
 
         for (int x = 0; x < 128; x++) {
-            int raw = analogRead(AUDIO_ADC_PIN);
-            int centered = raw - 2048;  // Remove DC bias (midpoint of 12-bit range)
-            int yOffset = constrain(centered / divisor, -amplitude, amplitude);
-            int y = waveY - yOffset;    // Negative: louder signal draws upward from baseline
+            int centered = (int)(samples[x] - mean);
+            int yOffset = (peak == 0) ? 0 : ((centered * amplitude) / scale);
+            if (yOffset >  amplitude) yOffset =  amplitude;
+            if (yOffset < -amplitude) yOffset = -amplitude;
+            int y = waveY - yOffset;  // positive offset → draw above baseline
             if (y >= 0 && y < 64) {
                 u8g2->drawPixel(x, y);
             }
