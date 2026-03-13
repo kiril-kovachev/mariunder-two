@@ -43,3 +43,9 @@ USB 5V (VBUS)
      
 # Play sound on 5v usb
 # battery indicator on low battery
+
+#Bug: Log -> Manual sleep requested via long tap - entering POWER_DEEP_SLEEP
+is shown, but device does not enter sleep
+
+#After playing mp3 (single tap mode), exit to eyes, instead to mp3 mode
+#Move sinewave 4 pixels down
