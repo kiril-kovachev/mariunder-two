@@ -213,11 +213,10 @@ void loop() {
     powerManager.update();
 
     // Check if entering deep sleep
+    static uint32_t deepSleepStartTime = 0;
+    static bool displayTurnedOff = false;
     if (powerManager.getState() == POWER_DEEP_SLEEP) {
         // Check if sleepy eyes animation is visible (give it time to render)
-        static uint32_t deepSleepStartTime = 0;
-        static bool displayTurnedOff = false;
-
         if (deepSleepStartTime == 0) {
             deepSleepStartTime = millis();
             displayTurnedOff = false;
@@ -247,8 +246,6 @@ void loop() {
         }
     } else {
         // Reset deep sleep start time if not in deep sleep mode
-        static uint32_t deepSleepStartTime = 0;
-        static bool displayTurnedOff = false;
         deepSleepStartTime = 0;
         displayTurnedOff = false;
     }
@@ -275,8 +272,10 @@ void loop() {
     if (tap != TouchSensorManager::NONE) {
         scheduler.handleTap(tap);
 
-        // Reset power manager activity timer
-        powerManager.resetActivity();
+        // Reset power manager activity timer, but not when entering deep sleep
+        if (powerManager.getState() != POWER_DEEP_SLEEP) {
+            powerManager.resetActivity();
+        }
     }
 
     // ===== Handle Rotation in Rotate Modes =====

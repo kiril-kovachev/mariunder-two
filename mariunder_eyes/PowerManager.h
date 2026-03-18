@@ -113,10 +113,11 @@ public:
         delay(100);
 
         // Configure ESP32-C6 wake sources
-        // ext1 wake on multiple pins going LOW
-        // Bit mask: GPIO2 (MPU6050) and GPIO7 (TTP223)
+        // ext1 wake on multiple pins going HIGH
+        // Both MPU_INT_PIN and TOUCH_SENSOR_PIN are LOW at rest; they go HIGH on activity
+        // Bit mask: GPIO2 (MPU6050) and GPIO3 (TTP223)
         uint64_t wake_mask = (1ULL << MPU_INT_PIN) | (1ULL << TOUCH_SENSOR_PIN);
-        esp_sleep_enable_ext1_wakeup(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+        esp_sleep_enable_ext1_wakeup(wake_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
 
         Serial.println("Going to sleep... Shake or touch to wake!");
         Serial.flush();

@@ -86,13 +86,9 @@ public:
             // In rotate mode 1 playing state: check if playback has ended
             if (_rotateMode == ROTATE_MODE_1 && _rotateMode1Playing) {
                 if (!_audioManager->isPlaying()) {
-                    // Track finished - return to idle/selection state
-                    _rotateMode1Playing = false;
-                    _face->HideEyes = true;
-                    _face->OverlayCallback = staticDrawRotateMode1Overlay;
-                    _lastRotationTime = millis();  // Reset timeout so mode doesn't immediately exit
-                    _canSelectNextMp3 = false;
-                    Serial.println("Rotate mode 1 playback finished - ready for next selection");
+                    // Track finished - exit back to eyes mode
+                    Serial.println("Rotate mode 1 playback finished - exiting to eyes");
+                    exitRotateMode();
                 }
                 return;  // Don't time out while playing
             }
@@ -658,7 +654,7 @@ private:
         // Scale divisor: map ±peak to ±amplitude pixels (avoid divide-by-zero)
         int16_t scale = (peak < 1) ? 1 : peak;
 
-        const int waveY = 60;   // Baseline row — below the eye area
+        const int waveY = 64;   // Baseline row — below the eye area (shifted 4px down)
         const int amplitude = 4; // ±4 pixel max deflection (rows 56–64)
 
         for (int x = 0; x < 128; x++) {
@@ -667,9 +663,9 @@ private:
             if (yOffset >  amplitude) yOffset =  amplitude;
             if (yOffset < -amplitude) yOffset = -amplitude;
             int y = waveY - yOffset;  // positive offset → draw above baseline
-            if (y >= 0 && y < 64) {
-                u8g2->drawPixel(x, y);
-            }
+            if (y < 0) y = 0;
+            // Fill from the waveform point down to the bottom of the display
+            u8g2->drawVLine(x, y, 64 - y);
         }
     }
 
