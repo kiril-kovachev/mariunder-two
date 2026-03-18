@@ -44,7 +44,9 @@ public:
         _shakeCooldown(10000),       // 10s cooldown between shake reactions
         _isInShakenMode(false),
         _rotateMode1Playing(false),
-        _wavePhase(0.0f)
+        _wavePhase(0.0f),
+        _waveformFading(false),
+        _waveformFadeStartTime(0)
     {}
 
     void begin(Face* face, AudioManager* audio, PowerManager* power) {
@@ -85,12 +87,20 @@ public:
         if (_rotateMode != ROTATE_MODE_NONE) {
             // In rotate mode 1 playing state: check if playback has ended
             if (_rotateMode == ROTATE_MODE_1 && _rotateMode1Playing) {
-                if (!_audioManager->isPlaying()) {
-                    // Track finished - exit back to eyes mode
-                    Serial.println("Rotate mode 1 playback finished - exiting to eyes");
-                    exitRotateMode();
+                if (_waveformFading) {
+                    // Fade-out in progress — exit once 600ms elapsed
+                    if (millis() - _waveformFadeStartTime >= 600) {
+                        _waveformFading = false;
+                        Serial.println("Waveform fade-out complete - exiting to eyes");
+                        exitRotateMode();
+                    }
+                } else if (!_audioManager->isPlaying()) {
+                    // Track finished — start fade-out
+                    Serial.println("Rotate mode 1 playback finished - fading out waveform");
+                    _waveformFading = true;
+                    _waveformFadeStartTime = millis();
                 }
-                return;  // Don't time out while playing
+                return;  // Don't time out while playing or fading
             }
             uint32_t now = millis();
             if ((now - _lastRotationTime) >= _rotateModeTimeout) {
@@ -569,6 +579,8 @@ private:
     // Rotate mode 1 playback state
     bool _rotateMode1Playing;           // True while a folder-02 track is playing
     float _wavePhase;                   // Phase for scrolling wave animation during playback
+    bool _waveformFading;               // True during waveform fade-out after playback ends
+    uint32_t _waveformFadeStartTime;    // Timestamp when fade-out started
 
     // Static overlay rendering methods (to be used as callbacks)
     static EmotionScheduler* _instance;  // Singleton instance for static callbacks
@@ -655,7 +667,15 @@ private:
         int16_t scale = (peak < 1) ? 1 : peak;
 
         const int waveY = 64;   // Baseline row — below the eye area (shifted 4px down)
-        const int amplitude = 4; // ±4 pixel max deflection (rows 56–64)
+        const int maxAmplitude = 4; // ±4 pixel max deflection
+        // Scale amplitude down during fade-out
+        float fadeScale = 1.0f;
+        if (_waveformFading) {
+            uint32_t elapsed = millis() - _waveformFadeStartTime;
+            fadeScale = 1.0f - (float)elapsed / 600.0f;
+            if (fadeScale < 0.0f) fadeScale = 0.0f;
+        }
+        const int amplitude = (int)(maxAmplitude * fadeScale);
 
         for (int x = 0; x < 128; x++) {
             int centered = (int)(samples[x] - mean);
