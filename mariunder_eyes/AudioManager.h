@@ -48,12 +48,17 @@ public:
     void update() {
         if (!_isInitialized) return;
 
-        // Check if playback has finished
-        // DFPlayer will return -1 when no file is playing
         if (_isPlaying) {
-            // Simple timeout-based tracking
-            // Most emotion sounds should be < 5 seconds
-            if (millis() - _playbackStartTime > 5000) {
+            // Primary: listen for the DFPlayer "play finished" notification
+            if (_dfPlayer.available()) {
+                uint8_t type = _dfPlayer.readType();
+                if (type == DFPlayerPlayFinished) {
+                    _isPlaying = false;
+                    return;
+                }
+            }
+            // Fallback: hard timeout (10s) in case the notification is missed
+            if (millis() - _playbackStartTime > 10000) {
                 _isPlaying = false;
             }
         }

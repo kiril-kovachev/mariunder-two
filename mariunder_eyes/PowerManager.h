@@ -20,6 +20,8 @@ public:
         _motionManager(nullptr),
         _currentState(POWER_ACTIVE),
         _lastActivityTime(0),
+        _sleepRequestTime(0),
+        _sleepGracePeriod(2000),    // 2s grace after manual sleep request
         _sleepyTimeout(30000),     // 30 seconds
         _deepSleepTimeout(60000)   // 60 seconds total
     {}
@@ -35,8 +37,14 @@ public:
     void update() {
         if (_motionManager == nullptr) return;
 
+        // Ignore activity for a grace period after a manual sleep request.
+        // A 4s long press causes physical vibration that keeps isMoving() true
+        // for up to 500ms, which would otherwise immediately cancel the sleep state.
+        bool inGracePeriod = (_sleepRequestTime > 0 &&
+                              (millis() - _sleepRequestTime) < _sleepGracePeriod);
+
         // Check for motion/activity
-        if (_motionManager->isMoving()) {
+        if (!inGracePeriod && _motionManager->isMoving()) {
             // Activity detected - reset to active state
             if (_currentState != POWER_ACTIVE) {
                 Serial.println("Activity detected - returning to POWER_ACTIVE state");
@@ -94,6 +102,7 @@ public:
         // Manual deep sleep request (triggered by 4s tap)
         Serial.println("Manual sleep requested via long tap - entering POWER_DEEP_SLEEP");
         _currentState = POWER_DEEP_SLEEP;
+        _sleepRequestTime = millis();  // Start grace period to suppress spurious activity
     }
 
     uint32_t getIdleTime() const {
@@ -147,6 +156,8 @@ private:
     MotionManager* _motionManager;
     PowerState _currentState;
     uint32_t _lastActivityTime;
+    uint32_t _sleepRequestTime;
+    uint32_t _sleepGracePeriod;
     uint32_t _sleepyTimeout;
     uint32_t _deepSleepTimeout;
 };

@@ -44,6 +44,9 @@ public:
         _shakeCooldown(10000),       // 10s cooldown between shake reactions
         _isInShakenMode(false),
         _rotateMode1Playing(false),
+        _rotate1Pending(false),
+        _pendingStartTime(0),
+        _pendingPulsePeriod(500),       // 500ms per confirmation pulse
         _wavePhase(0.0f),
         _waveformFading(false),
         _waveformFadeStartTime(0)
@@ -102,6 +105,25 @@ public:
                 }
                 return;  // Don't time out while playing or fading
             }
+            // Auto-play after 2 pulse confirmation
+            if (_rotate1Pending) {
+                uint32_t pendingElapsed = millis() - _pendingStartTime;
+                if (pendingElapsed >= _pendingPulsePeriod * 2) {
+                    _rotate1Pending = false;
+                    _audioManager->stopPlayback();
+                    delay(50);
+                    _audioManager->playFolderFile(2, _currentFolderFile);
+                    _rotateMode1Playing = true;
+                    _wavePhase = 0.0f;
+                    _face->HideEyes = false;
+                    _face->OverlayCallback = staticDrawPlaybackOverlay;
+                    Serial.print("Auto-playing file ");
+                    Serial.print(_currentFolderFile);
+                    Serial.println(" after 2-pulse confirm");
+                    _lastRotationTime = millis();
+                }
+                return;
+            }
             uint32_t now = millis();
             if ((now - _lastRotationTime) >= _rotateModeTimeout) {
                 Serial.println("Rotate mode timeout (5s no rotation) - exiting");
@@ -113,11 +135,12 @@ public:
         // While in shaken mode: hold angry expression until MP3 finishes, then resume normal
         if (_isInShakenMode) {
             if (!_audioManager->isPlaying()) {
-                // Audio finished - clear buzz and exit shaken mode
+                // Audio finished - clear buzz, exit shaken mode, return to normal
                 _face->RightEye.Variation2.Clear();
                 _face->LeftEye.Variation2.Clear();
                 _isInShakenMode = false;
-                Serial.println("Shaken mode ended - audio finished");
+                Serial.println("Shaken mode ended - returning to normal");
+                changeEmotionTo(NORMAL);
                 _randomChangeTimer.restart();
             }
             return;  // Stay in angry, don't allow any other emotion changes
@@ -336,43 +359,43 @@ public:
                 return;
             }
 
+            // While in pending state, only watch for further rotation (cancel confirmation)
+            if (_rotate1Pending) {
+                if (abs(degrees) >= 5.0f) {
+                    // User kept rotating - cancel pulse, let accumulator continue toward next threshold
+                    Serial.println("Further rotation during pending - cancelling pulse, continuing selection");
+                    _rotate1Pending = false;
+                    _lastRotationTime = millis();
+                }
+                return;  // Don't check main threshold while pending
+            }
+
             // Update visual feedback - can select next MP3 when rotation is close to threshold
             _canSelectNextMp3 = abs(degrees) >= (ROTATION_THRESHOLD * 0.7f);  // Visual feedback at 70% threshold
 
-            // Rotate mode 1: Change MP3 file on 15-degree rotation
+            // Rotate mode 1: On 15-degree rotation, advance file and enter pending confirmation
             if (abs(degrees) >= ROTATION_THRESHOLD) {
-                // Update last rotation time (for timeout tracking)
                 _lastRotationTime = millis();
 
                 if (degrees > 0) {
-                    // Rotate right - next file
                     Serial.println("Rotate right - next MP3 file");
                     _currentFolderFile++;
-                    if (_currentFolderFile > 10) _currentFolderFile = 1;  // Assuming 10 files in folder 02
+                    if (_currentFolderFile > 10) _currentFolderFile = 1;
                 } else {
-                    // Rotate left - previous file
                     Serial.println("Rotate left - previous MP3 file");
                     _currentFolderFile--;
                     if (_currentFolderFile < 1) _currentFolderFile = 10;
                 }
 
-                // Play the file from folder 02
-                Serial.print("Playing folder 02, file ");
+                Serial.print("File selected: folder 02, file ");
                 Serial.println(_currentFolderFile);
-                _audioManager->stopPlayback();
-                delay(50);
-                _audioManager->playFolderFile(2, _currentFolderFile);
 
-                // Reset rotation accumulator and visual feedback
+                // Reset rotation accumulator and enter 2-pulse pending state
                 motionManager->resetAccumulatedRotation();
                 _canSelectNextMp3 = false;
-
-                // Transition to playing state: show eyes with wave overlay
-                _rotateMode1Playing = true;
-                _wavePhase = 0.0f;
-                _face->HideEyes = false;
-                _face->OverlayCallback = staticDrawPlaybackOverlay;
-                Serial.println("Playback started - showing eyes with wave animation");
+                _rotate1Pending = true;
+                _pendingStartTime = millis();
+                _pulsePhase = 0.0f;
             }
         } else if (_rotateMode == ROTATE_MODE_2) {
             // Rotate mode 2: Change volume on 15-degree rotation
@@ -410,6 +433,7 @@ private:
         _pulsePhase = 0.0f;            // Reset pulse animation
         _canSelectNextMp3 = false;
         _rotateMode1Playing = false;   // Start in selection (idle) state
+        _rotate1Pending = false;
         _wavePhase = 0.0f;
 
         // Hide eyes and set overlay callback
@@ -463,6 +487,7 @@ private:
     void exitRotateMode() {
         RotateMode previousMode = _rotateMode;
         _rotateMode = ROTATE_MODE_NONE;
+        _rotate1Pending = false;
 
         // Restore eyes and clear overlay callback
         _face->HideEyes = false;
@@ -578,6 +603,9 @@ private:
 
     // Rotate mode 1 playback state
     bool _rotateMode1Playing;           // True while a folder-02 track is playing
+    bool _rotate1Pending;               // True while showing 2-pulse confirmation before playing
+    uint32_t _pendingStartTime;         // When pending state started
+    uint32_t _pendingPulsePeriod;       // Duration of each confirmation pulse (ms)
     float _wavePhase;                   // Phase for scrolling wave animation during playback
     bool _waveformFading;               // True during waveform fade-out after playback ends
     uint32_t _waveformFadeStartTime;    // Timestamp when fade-out started
@@ -589,27 +617,57 @@ private:
         // Draw pulsating filled circle for rotate mode 1 (centered)
         extern U8G2* u8g2;
 
-        // Pulse faster when at threshold to signal readiness
+        int centerX = 64;
+        int centerY = 32;
+
+        if (_rotate1Pending) {
+            // --- 2-pulse confirmation animation ---
+            // Each pulse: a filled disc that expands outward like a "ping"
+            uint32_t elapsed = millis() - _pendingStartTime;
+            uint32_t pulseIdx = elapsed / _pendingPulsePeriod;   // 0 = first pulse, 1 = second
+            float phase = (float)(elapsed % _pendingPulsePeriod) / (float)_pendingPulsePeriod; // 0.0–1.0
+
+            // Smooth expand → contract using half-sine (0 → max → 0)
+            float t = sin(phase * PI);
+            int expandR = (int)(t * 26.0f);  // Expands 0 → 26px
+
+            // Small solid centre dot
+            u8g2->drawDisc(centerX, centerY, 5);
+
+            // Expanding ring (two concentric circles for thickness)
+            if (expandR > 6) {
+                u8g2->drawCircle(centerX, centerY, expandR);
+                u8g2->drawCircle(centerX, centerY, expandR - 1);
+            }
+
+            // Two indicator dots at bottom: filled = pulse already done / active, outline = upcoming
+            for (int i = 0; i < 2; i++) {
+                int dotX = centerX - 8 + i * 16;
+                int dotY = centerY + 22;
+                if ((int)pulseIdx > i || ((int)pulseIdx == i)) {
+                    u8g2->drawDisc(dotX, dotY, 3);   // Filled: current or completed
+                } else {
+                    u8g2->drawCircle(dotX, dotY, 3); // Outline: not yet reached
+                }
+            }
+            return;
+        }
+
+        // --- Normal selection state ---
         float pulseSpeed = _canSelectNextMp3 ? 0.35f : 0.15f;
         _pulsePhase += pulseSpeed;
         if (_pulsePhase > TWO_PI) _pulsePhase -= TWO_PI;
 
-        // Calculate radius based on whether we can select next MP3
-        float baseRadius = _canSelectNextMp3 ? 20.0f : 12.0f;  // Bigger when at threshold
+        float baseRadius = _canSelectNextMp3 ? 20.0f : 12.0f;
         float pulse = sin(_pulsePhase) * 0.5f + 0.5f;  // 0.0 to 1.0
-        int radius = (int)(baseRadius + pulse * 6.0f);  // Pulsate ±6 pixels
-
-        // Draw filled circle in center of screen
-        int centerX = 64;  // Center X (128 / 2)
-        int centerY = 32;  // Center Y (64 / 2)
+        int radius = (int)(baseRadius + pulse * 6.0f);
 
         u8g2->drawDisc(centerX, centerY, radius);
 
-        // When at threshold, draw an outer ring to clearly signal track-select is ready
         if (_canSelectNextMp3) {
             int ringRadius = radius + 5;
             u8g2->drawCircle(centerX, centerY, ringRadius);
-            u8g2->drawCircle(centerX, centerY, ringRadius + 1);  // Double ring for emphasis
+            u8g2->drawCircle(centerX, centerY, ringRadius + 1);
         }
     }
 
@@ -666,7 +724,7 @@ private:
         // Scale divisor: map ±peak to ±amplitude pixels (avoid divide-by-zero)
         int16_t scale = (peak < 1) ? 1 : peak;
 
-        const int waveY = 64;   // Baseline row — below the eye area (shifted 4px down)
+        const int waveY = 60;   // Baseline row — bottom area of screen (rows 0-63)
         const int maxAmplitude = 4; // ±4 pixel max deflection
         // Scale amplitude down during fade-out
         float fadeScale = 1.0f;
@@ -684,6 +742,7 @@ private:
             if (yOffset < -amplitude) yOffset = -amplitude;
             int y = waveY - yOffset;  // positive offset → draw above baseline
             if (y < 0) y = 0;
+            if (y >= 64) continue;   // clamp: don't draw outside screen bounds
             // Fill from the waveform point down to the bottom of the display
             u8g2->drawVLine(x, y, 64 - y);
         }

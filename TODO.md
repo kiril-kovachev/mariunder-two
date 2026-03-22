@@ -50,10 +50,10 @@ is shown, but device does not enter sleep
 #Bug: fixed? After playing mp3 (single tap mode), exit to eyes, instead to mp3 mode
 #Move sinewave 4 pixels down
 
-# Bug - sinewave on whole screen
-# Bug - After shake mode -> not returning to normal eyes
+# Bug: fixed? - sinewave on whole screen
+# Bug: fixed? - After shake mode -> not returning to normal eyes
 # Shake mode buz effect stays active after shake completion
-# Bug - power saving state:
+# Bug: fixed? - power saving state:
 22:23:37.056 -> Manual sleep requested via long tap - entering POWER_DEEP_SLEEP
 22:23:37.056 -> PowerManager in POWER_SLEEPY/POWER_DEEP_SLEEP state - forcing sleepy emotion
 22:23:37.056 -> Changing emotion to: Sleepy
