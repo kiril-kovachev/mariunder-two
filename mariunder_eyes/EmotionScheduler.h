@@ -316,6 +316,7 @@ public:
             Serial.println("Single tap - cancelling playback, returning to MP3 selection");
             _audioManager->stopPlayback();
             _rotateMode1Playing = false;
+            _waveformFading = false;
             _face->HideEyes = true;
             _face->OverlayCallback = staticDrawRotateMode1Overlay;
             _lastRotationTime = millis();
@@ -498,6 +499,8 @@ private:
         RotateMode previousMode = _rotateMode;
         _rotateMode = ROTATE_MODE_NONE;
         _rotate1Pending = false;
+        _rotateMode1Playing = false;
+        _waveformFading = false;
 
         // Restore eyes and clear overlay callback
         _face->HideEyes = false;
@@ -768,6 +771,8 @@ private:
             if (fadeScale < 0.0f) fadeScale = 0.0f;
         }
         const int amplitude = (int)(maxAmplitude * fadeScale);
+        // Nothing to draw when fully faded — avoids a solid bottom-strip artifact
+        if (amplitude == 0) return;
 
         for (int x = 0; x < 128; x++) {
             int centered = (int)(samples[x] - mean);
