@@ -49,7 +49,9 @@ public:
         _pendingPulsePeriod(500),       // 500ms per confirmation pulse
         _wavePhase(0.0f),
         _waveformFading(false),
-        _waveformFadeStartTime(0)
+        _waveformFadeStartTime(0),
+        _transitionBuzzActive(false),
+        _transitionBuzzEndTime(0)
     {}
 
     void begin(Face* face, AudioManager* audio, PowerManager* power) {
@@ -130,6 +132,13 @@ public:
                 exitRotateMode();
             }
             return;  // Don't do other updates in rotate mode
+        }
+
+        // Clear brief transition buzz when its duration expires
+        if (_transitionBuzzActive && !_isInShakenMode && millis() >= _transitionBuzzEndTime) {
+            _face->RightEye.Variation2.Clear();
+            _face->LeftEye.Variation2.Clear();
+            _transitionBuzzActive = false;
         }
 
         // While in shaken mode: hold angry expression until MP3 finishes, then resume normal
@@ -350,6 +359,7 @@ public:
         float degrees = accumulatedRotation * 180.0f / PI;
 
         const float ROTATION_THRESHOLD = 15.0f;
+        const float VOLUME_ROTATION_THRESHOLD = 7.0f;  // More sensitive for volume control
 
         if (_rotateMode == ROTATE_MODE_1) {
             // Block track changes while a track is playing
@@ -398,8 +408,8 @@ public:
                 _pulsePhase = 0.0f;
             }
         } else if (_rotateMode == ROTATE_MODE_2) {
-            // Rotate mode 2: Change volume on 15-degree rotation
-            if (abs(degrees) >= ROTATION_THRESHOLD) {
+            // Rotate mode 2: Change volume on 7-degree rotation (more sensitive)
+            if (abs(degrees) >= VOLUME_ROTATION_THRESHOLD) {
                 // Update last rotation time (for timeout tracking)
                 _lastRotationTime = millis();
 
@@ -566,6 +576,21 @@ private:
             case SKEPTICAL: _face->Expression.GoTo_Skeptical(); break;
             case FRUSTRATED: _face->Expression.GoTo_Frustrated(); break;
         }
+
+        // Randomly fire a brief glitch buzz on emotion change (~25% chance)
+        // Skip for SLEEPY and while shaken mode is managing Variation2
+        if (emotion != SLEEPY && !_isInShakenMode && random(0, 4) == 0) {
+            uint8_t period = 80 + (uint8_t)(random(0, 3)) * 25;  // 80, 105, or 130 ms period
+            uint16_t duration = 100 + (uint16_t)(random(0, 4)) * 30;  // 100–190 ms total
+            _face->RightEye.Variation2.Values.OffsetX = 2;
+            _face->RightEye.Variation2.Animation.SetTriangle(period, 0);
+            _face->RightEye.Variation2.Animation.Restart();
+            _face->LeftEye.Variation2.Values.OffsetX = 2;
+            _face->LeftEye.Variation2.Animation.SetTriangle(period, 0);
+            _face->LeftEye.Variation2.Animation.Restart();
+            _transitionBuzzActive = true;
+            _transitionBuzzEndTime = millis() + duration;
+        }
     }
 
     Face* _face;
@@ -610,6 +635,10 @@ private:
     bool _waveformFading;               // True during waveform fade-out after playback ends
     uint32_t _waveformFadeStartTime;    // Timestamp when fade-out started
 
+    // Transition buzz (brief glitch on emotion change)
+    bool _transitionBuzzActive;         // True while a transition buzz is running
+    uint32_t _transitionBuzzEndTime;    // millis() when buzz should be cleared
+
     // Static overlay rendering methods (to be used as callbacks)
     static EmotionScheduler* _instance;  // Singleton instance for static callbacks
 
@@ -629,26 +658,31 @@ private:
 
             // Smooth expand → contract using half-sine (0 → max → 0)
             float t = sin(phase * PI);
-            int expandR = (int)(t * 26.0f);  // Expands 0 → 26px
+            int expandR = (int)(t * 18.0f);  // Expands 0 → 18px (reduced so bar fits below)
 
             // Small solid centre dot
-            u8g2->drawDisc(centerX, centerY, 5);
+            u8g2->drawDisc(centerX, centerY, 4);
 
             // Expanding ring (two concentric circles for thickness)
-            if (expandR > 6) {
+            if (expandR > 5) {
                 u8g2->drawCircle(centerX, centerY, expandR);
                 u8g2->drawCircle(centerX, centerY, expandR - 1);
             }
 
-            // Two indicator dots at bottom: filled = pulse already done / active, outline = upcoming
-            for (int i = 0; i < 2; i++) {
-                int dotX = centerX - 8 + i * 16;
-                int dotY = centerY + 22;
-                if ((int)pulseIdx > i || ((int)pulseIdx == i)) {
-                    u8g2->drawDisc(dotX, dotY, 3);   // Filled: current or completed
-                } else {
-                    u8g2->drawCircle(dotX, dotY, 3); // Outline: not yet reached
-                }
+            // Animated progress bar at bottom — fills over the full 2-pulse duration
+            const int BAR_X = 10, BAR_Y = 56, BAR_W = 108, BAR_H = 5;
+            float progress = (float)elapsed / (float)(_pendingPulsePeriod * 2);
+            if (progress > 1.0f) progress = 1.0f;
+            int fillPx = (int)((BAR_W - 2) * progress);
+
+            u8g2->drawFrame(BAR_X, BAR_Y, BAR_W, BAR_H);
+            if (fillPx > 0) {
+                u8g2->drawBox(BAR_X + 1, BAR_Y + 1, fillPx, BAR_H - 2);
+            }
+            // Blinking leading-edge pixel for animated feel (~5 Hz)
+            int headX = BAR_X + 1 + fillPx;
+            if (fillPx < BAR_W - 2 && ((millis() / 100) & 1)) {
+                u8g2->drawPixel(headX, BAR_Y + BAR_H / 2);
             }
             return;
         }
@@ -658,14 +692,14 @@ private:
         _pulsePhase += pulseSpeed;
         if (_pulsePhase > TWO_PI) _pulsePhase -= TWO_PI;
 
-        float baseRadius = _canSelectNextMp3 ? 20.0f : 12.0f;
+        float baseRadius = _canSelectNextMp3 ? 14.0f : 8.0f;
         float pulse = sin(_pulsePhase) * 0.5f + 0.5f;  // 0.0 to 1.0
-        int radius = (int)(baseRadius + pulse * 6.0f);
+        int radius = (int)(baseRadius + pulse * 5.0f);
 
         u8g2->drawDisc(centerX, centerY, radius);
 
         if (_canSelectNextMp3) {
-            int ringRadius = radius + 5;
+            int ringRadius = radius + 4;
             u8g2->drawCircle(centerX, centerY, ringRadius);
             u8g2->drawCircle(centerX, centerY, ringRadius + 1);
         }

@@ -19,6 +19,12 @@ void FaceExpression::ClearVariations() {
     _face.LeftEye.Variation2.Clear();
     _face.RightEye.Variation1.Animation.Restart();
     _face.LeftEye.Variation1.Animation.Restart();
+    // Reset Variation2 animation to default period so a prior shake's 80ms buzz interval
+    // doesn't persist into the next expression (e.g. normal eye width pulse would buzz at 80ms)
+    _face.RightEye.Variation2.Animation.SetTriangle(800, 0);
+    _face.RightEye.Variation2.Animation.Restart();
+    _face.LeftEye.Variation2.Animation.SetTriangle(800, 0);
+    _face.LeftEye.Variation2.Animation.Restart();
 }
 
 void FaceExpression::GoTo_Normal() {
